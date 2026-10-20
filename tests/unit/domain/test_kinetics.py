@@ -3,7 +3,12 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from schemeup.domain.geometry import Point
-from schemeup.domain.kinetics import Inertia, VelocityTracker
+from schemeup.domain.kinetics import (
+    Inertia,
+    Spring,
+    VelocityTracker,
+    rubber_band,
+)
 
 
 def test_velocity_of_a_steady_drag() -> None:
@@ -52,3 +57,72 @@ def test_inertia_does_not_depend_on_frame_rate(dt: float) -> None:
     assert (first + second).x == pytest.approx(one_step.x)
     assert (first + second).y == pytest.approx(one_step.y)
     assert after_two.velocity.x == pytest.approx(after_one.velocity.x)
+
+
+def test_default_glide_matches_ios_scroll_projection() -> None:
+    # Apple projects a flick of v px/s to travel (v / 1000) * 0.998 / 0.002 px.
+    apple_distance = 1000 / 1000 * 0.998 / 0.002
+    inertia = Inertia(Point(1000, 0))
+    assert inertia.velocity.x * inertia.time_constant == pytest.approx(apple_distance, rel=2e-3)
+
+
+def run(spring: Spring, seconds: float, dt: float = 1 / 120) -> list[Spring]:
+    states = [spring]
+    for _ in range(round(seconds / dt)):
+        states.append(states[-1].step(dt))
+    return states
+
+
+def test_critically_damped_spring_settles_without_overshoot() -> None:
+    states = run(Spring(value=0, target=100, response=0.4), seconds=2)
+    assert max(s.value for s in states) <= 100 + 1e-9
+    assert states[-1].at_rest
+    assert states[-1].value == pytest.approx(100, abs=1e-3)
+
+
+def test_bouncy_spring_overshoots_then_settles() -> None:
+    states = run(Spring(value=0, target=100, response=0.4, damping_ratio=0.6), seconds=3)
+    assert max(s.value for s in states) > 100
+    assert states[-1].value == pytest.approx(100, abs=1e-3)
+
+
+@given(
+    st.floats(min_value=0.001, max_value=0.1),
+    st.floats(min_value=-500, max_value=500),
+    st.sampled_from([1.0, 0.8, 0.5]),
+)
+def test_spring_does_not_depend_on_frame_rate(dt: float, velocity: float, damping: float) -> None:
+    spring = Spring(value=-40, target=60, velocity=velocity, damping_ratio=damping)
+    once = spring.step(2 * dt)
+    twice = spring.step(dt).step(dt)
+    assert twice.value == pytest.approx(once.value, abs=1e-9)
+    assert twice.velocity == pytest.approx(once.velocity, abs=1e-6)
+
+
+def test_retargeting_keeps_position_and_velocity() -> None:
+    moving = run(Spring(value=0, target=100), seconds=0.1)[-1]
+    redirected = moving.retargeted(-50)
+    assert redirected.value == moving.value
+    assert redirected.velocity == moving.velocity
+    # It keeps going forward for a moment before turning around, no brick wall.
+    assert redirected.step(1 / 120).value > moving.value
+
+
+def test_spring_starts_with_the_handed_over_velocity() -> None:
+    spring = Spring(value=0, target=0, velocity=300)
+    assert spring.step(0.001).value == pytest.approx(0.3, rel=0.05)
+
+
+def test_invalid_springs_are_rejected() -> None:
+    with pytest.raises(ValueError):
+        Spring(0, 1, response=0)
+    with pytest.raises(ValueError):
+        Spring(0, 1, damping_ratio=1.5)
+
+
+def test_rubber_band_follows_at_first_then_resists() -> None:
+    assert rubber_band(1, dimension=1000) == pytest.approx(0.55, rel=1e-3)
+    assert rubber_band(-1, dimension=1000) == pytest.approx(-0.55, rel=1e-3)
+    pulls = [rubber_band(o, dimension=100) for o in range(0, 10000, 100)]
+    assert pulls == sorted(pulls)
+    assert pulls[-1] < 100
