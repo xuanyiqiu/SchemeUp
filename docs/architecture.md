@@ -522,17 +522,24 @@ The camera is an immutable value with pure methods:
 - `to_screen` and `to_world`.
 - `visible_rect`.
 - `panned_by`, for a delta in screen pixels.
-- `zoomed_at`, which keeps the world point under the cursor fixed while the zoom changes.
+- `zoomed_at` and `with_zoom_at`, which keep the world point under the cursor fixed while the zoom changes.
 - `centered_on` and `fitted_to`.
-- `interpolate`, for animations.
 
 Being pure, it's covered by property-based tests. One of them checks that the point under the cursor stays put for any camera, cursor and zoom factor.
 
 Input follows Excalidraw by default: the wheel pans, Shift+wheel pans sideways, and Ctrl+wheel zooms. A touchpad pinch zooms too; Windows sends it as Ctrl+wheel, and macOS as a native gesture. A setting will let mouse users make the plain wheel zoom.
 
-A notched mouse wheel jumps 120 units per click, which feels jerky. Wheel input only moves a target, and a frame timer eases the camera towards it with an exponential approach, reaching about 63% of the way in 60 ms. Touchpad input is already smooth and is applied directly.
+Camera motion follows the rules Apple describes in *Designing Fluid Interfaces*. Every animation starts from what's on screen right now, keeps the speed it already has, and can be grabbed or redirected at any moment. The tool for that is the spring, so the domain has a small `Spring` type described with Apple's two parameters. The damping ratio sets the bounce (1.0 means none) and the response sets how quickly it gets there. It steps with the closed-form solution of the damped oscillator, so it moves the same at 60 Hz and at 144 Hz. Changing its target keeps its position and velocity, which is what makes a redirect smooth instead of a "brick wall".
 
-Panning by dragging (middle button, or Space plus left button) records the pointer positions from the last 80 ms. On release, the view keeps gliding with that velocity and decays exponentially, with a time constant of 325 ms, close to iOS scrolling. The decay uses the exact integral of the motion, so the glide distance doesn't depend on the frame rate.
+A notched mouse wheel jumps 120 units per click, which feels jerky. Each click only moves the target of a stiff, critically damped spring (response 0.15 s), one for zoom in log space and one per pan axis. Fast clicks blend into a single smooth motion instead of a pulse per click. Touchpad input is already smooth and is applied directly.
+
+Panning by dragging (middle button, or Space plus left button) records the pointer positions from the last 80 ms. On release, the view keeps gliding with that velocity and decays exponentially, using UIScrollView's normal deceleration rate (0.998 per millisecond, a time constant of about half a second). The decay uses the exact integral of the motion, so the glide distance doesn't depend on the frame rate. Grabbing the canvas again catches it where it is.
+
+The different motions are independent channels that add up in one frame loop: the wheel zoom spring, the wheel pan springs, the glide and the recenter spring. Zooming doesn't stop a glide that's still running. When new input interrupts a recenter, the recenter's current speed becomes a glide, so the old motion blends into the new one. The frame timer ticks once per display refresh, so 120 and 144 Hz screens get every frame.
+
+The zoom limits are soft. Zooming past 3000% or below 10% stretches a little with iOS's rubber-band formula and never goes more than 2x past the limit. 150 ms after the input stops, it springs back. A hard stop would feel frozen; the stretch says "there's nothing more here" while still responding.
+
+When the system asks for reduced motion (on Windows, "Animation effects" turned off), the camera jumps straight to its destination: no springs, no glide, no rubber band. Until there's a settings screen, the `SCHEMEUP_MOTION` environment variable (`full` or `reduced`) overrides the system.
 
 ### 6.2 Rendering pipeline
 
@@ -773,7 +780,7 @@ Empty states are short and quiet.
 
 ### 7.5 The "Back to content" button
 
-The button appears only when no content is visible. It animates the camera (log-interpolated zoom, ease-out, about 300 ms) so that the content is centered at the current zoom. If the content doesn't fit at the current zoom, it fits it instead, capped at 100% so a small sketch doesn't get blown up. Shift+1 always fits all content, and Shift+2 fits the selection. On an empty canvas the button takes me back to the origin at 100%, which is what the Phase 0 skeleton already does.
+The button appears only when no content is visible. It moves the camera with three independent critically damped springs: the center in x, the center in y, and the zoom in log space. The response is 0.4 s, Apple's value for moving something into place. The content ends up centered at the current zoom. If the canvas is still gliding when I press the button, the glide's speed is handed to the springs, so the camera curves back instead of stopping and restarting. If the content doesn't fit at the current zoom, it fits it instead, capped at 100% so a small sketch doesn't get blown up. Shift+1 always fits all content, and Shift+2 fits the selection. On an empty canvas the button takes me back to the origin at 100%, which is what the Phase 0 skeleton already does.
 
 ### 7.6 Quick capture
 
@@ -797,7 +804,7 @@ Light and dark mode both apply to the UI (a Qt palette plus a small stylesheet) 
 
 UI strings go through Qt's translation system from day one. Widgets call `self.tr("...")`, and code outside QObject uses `QCoreApplication.translate`. English is the source language. `pyside6-lupdate` extracts strings into `.ts` files that are committed, and the build compiles them to `.qm` with `pyside6-lrelease`. Spanish is the first translation. The domain and application layers contain no user-facing strings, only enums and error types that the UI maps to translated text.
 
-Accessibility comes mostly for free with Qt widgets. On top of that, every toolbar button has an accessible name and a tooltip with its shortcut, everything works from the keyboard, and the color choices meet the contrast numbers above.
+Accessibility comes mostly for free with Qt widgets. On top of that, every toolbar button has an accessible name and a tooltip with its shortcut, everything works from the keyboard, and the color choices meet the contrast numbers above. The app also honors the system's reduced motion setting (section 6.1). Buttons react on press, not only on release, so the feedback never lags behind the click.
 
 ## 8. Export
 
@@ -926,20 +933,33 @@ The repository already contains the Phase 0 skeleton.
 
 The domain has four modules so far:
 - **`domain/geometry.py`**: points, sizes and rectangles.
-- **`domain/camera.py`**: the camera from section 6.1.
-- **`domain/kinetics.py`**: the velocity tracker and the inertia model.
+- **`domain/camera.py`**: the camera from section 6.1, the soft zoom limits, and the camera spring used for recentering.
+- **`domain/kinetics.py`**: the velocity tracker, the inertia model, the spring and the rubber-band function.
 - **`domain/sheets.py`**: the sheet protocol, the plain and grid sheets, and the level-of-detail logic from section 6.4.
 
 **`rendering/sheet_painter.py`** draws a sheet with crisp screen-space lines.
 
-**`ui/canvas_view.py`** is the canvas widget. It zooms around the cursor (smoothed for mouse wheels, direct for touchpads and pinch), pans with the wheel or by dragging with inertia, has the keyboard zoom shortcuts, shows the zoom percentage (click to reset), and has the "Back to content" button. With no content yet, that button animates back to the origin.
+**`ui/canvas_view.py`** is the canvas widget. It does everything from section 6.1:
+- Zoom around the cursor, smoothed for mouse wheels and direct for touchpads and pinch.
+- Rubber-banded zoom limits.
+- Panning with the wheel or by dragging, with inertia.
+- The keyboard zoom shortcuts.
+- The zoom percentage (click to reset).
+- The "Back to content" button, which springs back to the origin since there's no content yet.
+
+**`infrastructure/platform/motion.py`** reads the system's reduced motion setting.
 
 **`app.py`** is the composition root, and `python -m schemeup` or `uv run schemeup` start the app.
 
 The tests are a mix of unit tests and widget tests:
-- The domain tests use hypothesis for the camera properties.
+- The domain tests use hypothesis for the camera and spring properties, such as frame-rate independence.
 - The sheet tests check that lines stay inside the view and never get denser than the minimum spacing.
-- The widget tests run headless and check zooming around the cursor, panning, dragging and recentering.
+- The widget tests run headless and cover:
+  - zooming around the cursor
+  - rubber banding at the zoom limit
+  - panning, gliding and catching
+  - recentering and interrupting a recenter
+  - the reduced motion mode
 
 The CI workflow runs the linters on Ubuntu, then the tests on Windows and Ubuntu with Python 3.12 and 3.14.
 
