@@ -19,6 +19,8 @@ uv run schemeup
 
 The controls so far: Ctrl + wheel (or a touchpad pinch) zooms around the cursor, the wheel pans (hold Shift to pan sideways), and dragging with the middle button or with Space held down pans with inertia. Ctrl + = and Ctrl + - zoom in and out, and Ctrl + 0 goes back to 100%.
 
+The canvas follows the Windows "Animation effects" setting. With it turned off, camera moves are instant and there's no inertia. Until there's a settings screen, you can override that with the `SCHEMEUP_MOTION` environment variable, set to `full` or `reduced`.
+
 ## Development
 
 ```

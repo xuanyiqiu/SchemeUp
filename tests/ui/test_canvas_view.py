@@ -154,3 +154,42 @@ def test_recenter_can_be_interrupted_without_a_jump(qtbot: QtBot, view: CanvasVi
     # Taking over starts from the camera on screen, not from where the spring was heading.
     assert after == before
     qtbot.waitUntil(lambda: not view.is_animating)
+
+
+@pytest.fixture
+def calm_view(qtbot: QtBot) -> CanvasView:
+    canvas = CanvasView(GridSheet(), reduce_motion=True)
+    qtbot.addWidget(canvas)
+    canvas.resize(800, 600)
+    canvas.show()
+    qtbot.waitExposed(canvas)
+    return canvas
+
+
+def test_reduced_motion_recenters_instantly(calm_view: CanvasView) -> None:
+    calm_view.set_camera(Camera(5000, -3000, 2.5))
+    calm_view.recenter()
+    assert not calm_view.is_animating
+    assert calm_view.camera.to_screen(Point(0, 0)) == Point(400, 300)
+    assert calm_view.camera.zoom == 1.0
+
+
+def test_reduced_motion_zooms_without_springs_or_rubber_band(calm_view: CanvasView) -> None:
+    send_wheel(calm_view, QPointF(200, 150), 120, ctrl=True)
+    assert not calm_view.is_animating
+    assert calm_view.camera.zoom == pytest.approx(ZOOM_PER_NOTCH)
+
+    calm_view.set_camera(Camera(0, 0, MAX_ZOOM))
+    send_wheel(calm_view, QPointF(200, 150), 120, ctrl=True)
+    assert calm_view.camera.zoom == MAX_ZOOM
+
+
+def test_reduced_motion_does_not_glide(calm_view: CanvasView) -> None:
+    middle = Qt.MouseButton.MiddleButton
+    send_mouse(calm_view, QEvent.Type.MouseButtonPress, QPointF(100, 100), middle)
+    send_mouse(calm_view, QEvent.Type.MouseMove, QPointF(140, 100), middle)
+    send_mouse(
+        calm_view, QEvent.Type.MouseButtonRelease, QPointF(140, 100), Qt.MouseButton.NoButton
+    )
+    assert not calm_view.is_animating
+    assert calm_view.camera.to_screen(Point(0, 0)) == Point(440, 300)

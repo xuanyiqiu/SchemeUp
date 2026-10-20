@@ -67,9 +67,14 @@ def _wheel_spring(response: float = WHEEL_RESPONSE) -> Spring:
 class CanvasView(QWidget):
     camera_changed = Signal(object)
 
-    def __init__(self, sheet: Sheet, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, sheet: Sheet, *, reduce_motion: bool = False, parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self._sheet = sheet
+        # With reduced motion the camera jumps straight to where it's going:
+        # no springs, no glide, no rubber band.
+        self._reduce_motion = reduce_motion
         self._background = QColor("#ffffff")
         self._camera = Camera()
         self._has_viewport = False
@@ -142,6 +147,9 @@ class CanvasView(QWidget):
         velocity = self._inertia.velocity if self._inertia is not None else Point(0, 0)
         zoom_velocity = self._zoom_spring.velocity if self._zoom_spring is not None else 0.0
         self._stop_motion()
+        if self._reduce_motion:
+            self.set_camera(self._home_camera())
+            return
         self._camera_spring = CameraSpring.between(
             self._camera,
             self._home_camera(),
@@ -202,7 +210,7 @@ class CanvasView(QWidget):
                 dx, dy = float(pixel.x()), float(pixel.y())
             if event.modifiers() & Qt.KeyboardModifier.ShiftModifier and dx == 0:
                 dx, dy = dy, 0.0
-            if notched:
+            if notched and not self._reduce_motion:
                 self._interrupt_camera_spring()
                 sx, sy = self._pan_springs or (_wheel_spring(), _wheel_spring())
                 self._pan_springs = (sx.retargeted(sx.target + dx), sy.retargeted(sy.target + dy))
@@ -262,7 +270,7 @@ class CanvasView(QWidget):
         self._panning = False
         self._pan_button = Qt.MouseButton.NoButton
         inertia = Inertia.launch(self._velocity.velocity(self._now()))
-        if inertia.active:
+        if inertia.active and not self._reduce_motion:
             self._inertia = inertia
             self._start_frames()
         self._update_cursor()
@@ -294,8 +302,12 @@ class CanvasView(QWidget):
         """Zoom towards `log_zoom`. Past the limits the zoom stretches a little and
         springs back once the input stops."""
         self._interrupt_camera_spring()
+        anchor = anchor if anchor is not None else self._viewport_center()
+        if self._reduce_motion:
+            self.set_camera(self._camera.with_zoom_at(anchor, clamp_zoom(math.exp(log_zoom))))
+            return
         self._zoom_request = log_zoom
-        self._zoom_anchor = anchor if anchor is not None else self._viewport_center()
+        self._zoom_anchor = anchor
         target = math.log(soft_clamp_zoom(math.exp(log_zoom)))
         if smooth:
             spring = self._zoom_spring or Spring(
