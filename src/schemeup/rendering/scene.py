@@ -113,6 +113,7 @@ class SceneRenderer:
             str, tuple[Element, tuple[Any, ...], list[tuple[PartKind, QPainterPath]]]
         ] = {}
         self._colors: dict[tuple[str, bool], QColor] = {}
+        self.text_as_paths = False
 
     def set_images(self, images: ImageProvider | None) -> None:
         self._images = images
@@ -210,7 +211,14 @@ class SceneRenderer:
                     None if element.auto_width else element.width,
                     style.text_align,
                 )
-                draw_block(painter, block, 0.0, 0.0, self.color(style.stroke_color, dark))
+                draw_block(
+                    painter,
+                    block,
+                    0.0,
+                    0.0,
+                    self.color(style.stroke_color, dark),
+                    self.text_as_paths,
+                )
         elif isinstance(element, Image):
             self._paint_image(painter, element)
         elif isinstance(element, Frame):
@@ -258,7 +266,9 @@ class SceneRenderer:
         area = label_area(shape).translated(-shape.x, -shape.y)
         block = fitted_block(shape.label, style, area.width)
         box = place_block(area, Size(block.width, block.height), style)
-        draw_block(painter, block, box.x, box.y, self.color(style.stroke_color, dark))
+        draw_block(
+            painter, block, box.x, box.y, self.color(style.stroke_color, dark), self.text_as_paths
+        )
 
     def _paint_linear_label(
         self, painter: QPainter, element: LinearBase, dark: bool, background: str
@@ -276,7 +286,7 @@ class SceneRenderer:
             self.color(background, dark),
         )
         painter.restore()
-        draw_block(painter, block, x, y, self.color(style.stroke_color, dark))
+        draw_block(painter, block, x, y, self.color(style.stroke_color, dark), self.text_as_paths)
 
     def _paint_image(self, painter: QPainter, element: Image) -> None:
         target = QRectF(0, 0, element.width, element.height)
@@ -299,4 +309,11 @@ class SceneRenderer:
             painter.setPen(pen)
             painter.drawPath(path)
         block = layout_text(frame.name or " ", FontFamily.NORMAL, 14, None, TextAlign.LEFT)
-        draw_block(painter, block, 0.0, -block.height - 4, self.color(FRAME_COLOR, dark))
+        draw_block(
+            painter,
+            block,
+            0.0,
+            -block.height - 4,
+            self.color(FRAME_COLOR, dark),
+            self.text_as_paths,
+        )

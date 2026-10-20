@@ -147,6 +147,7 @@ class Sidebar(QWidget):
     settings_requested = Signal()
     theme_toggled = Signal()
     new_note_requested = Signal(object, str)  # folder id or None, template id
+    import_requested = Signal()
 
     def __init__(
         self, library: LibraryService, theme: Theme, parent: QWidget | None = None
@@ -193,6 +194,8 @@ class Sidebar(QWidget):
                     self._selected_folder(), t
                 )
             )
+        template_menu.addSeparator()
+        template_menu.addAction(self.tr("Import a file…"), self.import_requested.emit)
         self.template_button = QToolButton()
         self.template_button.setToolTip(self.tr("New note from a template"))
         self.template_button.setMenu(template_menu)

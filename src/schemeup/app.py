@@ -20,6 +20,8 @@ from schemeup.domain.errors import SchemeUpError, StorageError
 from schemeup.domain.templates import welcome
 from schemeup.infrastructure.backup import Backups
 from schemeup.infrastructure.database import Database
+from schemeup.infrastructure.export import FileExporter
+from schemeup.infrastructure.formats import FileImporter
 from schemeup.infrastructure.library_store import SqliteAssetStore, SqliteLibrary
 from schemeup.infrastructure.platform.hotkey import GlobalHotkey
 from schemeup.infrastructure.platform.motion import wants_reduced_motion
@@ -100,6 +102,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         register_hotkey=register_hotkey,
         hotkey_supported=hotkey.supported,
         reduce_motion=wants_reduced_motion(motion),
+        exporter=FileExporter(assets),
+        importer=FileImporter(),
     )
     window = MainWindow(library, session, assets=assets, env=env)
     hotkey_error = register_hotkey(settings.hotkey) if hotkey.supported else ""

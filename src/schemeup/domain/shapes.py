@@ -136,8 +136,11 @@ def element_parts(element: Element) -> tuple[PathPart, ...]:
             return tuple(_closed_shape(element, vertices, round_corners))
         case Ellipse():
             gen = _generator(element, w, h)
-            outline, _ = gen.ellipse(w / 2, h / 2, w, h)
-            fills = _fill_parts(gen, element.style, ellipse_polygon(w, h))
+            outline, wobble = gen.ellipse(w / 2, h / 2, w, h)
+            # Fill along the wobbly outline, so a sloppy ellipse's fill doesn't poke out.
+            fills = _fill_parts(
+                gen, element.style, wobble if len(wobble) > 8 else ellipse_polygon(w, h)
+            )
             return (*fills, PathPart(PartKind.STROKE, tuple(outline)))
         case Line() | Arrow():
             return tuple(_linear_parts(element))

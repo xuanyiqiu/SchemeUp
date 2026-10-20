@@ -52,7 +52,7 @@ from schemeup.application.ports import AssetStore
 from schemeup.domain import commands
 from schemeup.domain.camera import Camera, CameraSpring, clamp_zoom, soft_clamp_zoom
 from schemeup.domain.commands import LayerMove, ShapeKind
-from schemeup.domain.document import PAGE_SIZES_MM, Document
+from schemeup.domain.document import Document
 from schemeup.domain.elements import (
     LABELED,
     LINEAR,
@@ -65,16 +65,18 @@ from schemeup.domain.elements import (
     element_bounds,
     world_points,
 )
+from schemeup.domain.export_layout import page_rects
 from schemeup.domain.geometry import Point, Rect, Size
 from schemeup.domain.hit import is_inside, topmost_at
 from schemeup.domain.kinetics import Inertia, Spring, VelocityTracker
 from schemeup.domain.serialization import element_from_dict, element_to_dict
-from schemeup.domain.sheets import MM, Sheet, sheet_for
+from schemeup.domain.sheets import Sheet, sheet_for
 from schemeup.domain.snapping import Guide, SheetSnap, SnapTargets
 from schemeup.domain.spatial import SpatialHash
 from schemeup.domain.style import FontFamily, TextAlign
 from schemeup.domain.text import ARROW_LABEL_MAX_WIDTH, arrow_label_center, label_area, place_block
 from schemeup.rendering.fonts import canvas_font
+from schemeup.rendering.images import AssetImages
 from schemeup.rendering.scene import SceneRenderer, fitted_block
 from schemeup.rendering.sheet_painter import DARK_SHEET_STYLE, LIGHT_SHEET_STYLE, paint_sheet
 from schemeup.rendering.text import layout_text
@@ -115,7 +117,6 @@ OVERLAY_MARGIN = 16
 HIT_TOLERANCE_PX = 8.0
 SNAP_DISTANCE_PX = 8.0
 CLIPBOARD_MIME = "application/x-schemeup-elements"
-PAGE_GAP = 40.0
 
 
 def _point(p: QPointF) -> Point:
@@ -125,36 +126,6 @@ def _point(p: QPointF) -> Point:
 def _wheel_spring(response: float = WHEEL_RESPONSE) -> Spring:
     # Pan offsets are in screen pixels: rest within 0.1 px and 1 px/s.
     return Spring(0.0, 0.0, response=response, rest_distance=0.1, rest_speed=1.0)
-
-
-class AssetImages:
-    """Decodes stored image assets once and keeps them for the renderer."""
-
-    def __init__(self, assets: AssetStore | None) -> None:
-        self._assets = assets
-        self._cache: dict[str, QImage | None] = {}
-
-    def image(self, asset_id: str) -> QImage | None:
-        if asset_id not in self._cache:
-            data = self._assets.get(asset_id) if self._assets else None
-            image = QImage.fromData(data) if data else QImage()
-            self._cache[asset_id] = None if image.isNull() else image
-        return self._cache[asset_id]
-
-
-def page_rects(settings_page: str | None, landscape: bool, content_bottom: float) -> list[Rect]:
-    """Pages of a paged note, stacked downwards from the origin until they cover the content."""
-    if settings_page is None or settings_page not in PAGE_SIZES_MM:
-        return []
-    w_mm, h_mm = PAGE_SIZES_MM[settings_page]
-    if landscape:
-        w_mm, h_mm = h_mm, w_mm
-    w, h = w_mm * MM, h_mm * MM
-    pages = [Rect(0, 0, w, h)]
-    while pages[-1].bottom < content_bottom:
-        last = pages[-1]
-        pages.append(Rect(0, last.bottom + PAGE_GAP, w, h))
-    return pages
 
 
 class CanvasView(QWidget):
@@ -621,12 +592,13 @@ class CanvasView(QWidget):
         if mime.hasImage():
             image = mime.imageData()
             if isinstance(image, QImage) and not image.isNull():
-                data = QByteArray()
-                from PySide6.QtCore import QBuffer
+                from PySide6.QtCore import QBuffer, QIODevice
+                from PySide6.QtGui import QImageWriter
 
+                data = QByteArray()
                 buffer = QBuffer(data)
-                buffer.open(QBuffer.OpenModeFlag.WriteOnly)
-                image.save(buffer, b"PNG")
+                buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+                QImageWriter(buffer, b"PNG").write(image)
                 self.add_image_bytes(bytes(data.data()), at)
                 return
         if mime.hasText() and mime.text().strip():

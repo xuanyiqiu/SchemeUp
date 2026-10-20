@@ -6,7 +6,15 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from PySide6.QtCore import QPointF
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QTextLayout, QTextOption
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetricsF,
+    QPainter,
+    QPainterPath,
+    QTextLayout,
+    QTextOption,
+)
 
 from schemeup.domain.geometry import Size
 from schemeup.domain.style import FontFamily, TextAlign
@@ -94,8 +102,19 @@ class QtTextMeasurer:
         return Size(width, block.height)
 
 
-def draw_block(painter: QPainter, block: TextBlock, x: float, y: float, color: QColor) -> None:
-    painter.setFont(block.font())
+def draw_block(
+    painter: QPainter, block: TextBlock, x: float, y: float, color: QColor, as_paths: bool = False
+) -> None:
+    """Draw laid-out text; `as_paths` turns glyphs into outlines (for portable SVG files)."""
+    font = block.font()
+    if as_paths:
+        path = QPainterPath()
+        for line in block.lines:
+            if line.text:
+                path.addText(QPointF(x + line.x, y + line.baseline), font, line.text)
+        painter.fillPath(path, color)
+        return
+    painter.setFont(font)
     painter.setPen(color)
     for line in block.lines:
         if line.text:

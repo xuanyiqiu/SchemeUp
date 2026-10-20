@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from schemeup.application.editor import Change, EditorSession
+from schemeup.application.export import Exporter, Importer
 from schemeup.application.library import EventKind, LibraryEvent, LibraryService
 from schemeup.application.ports import AssetStore
 from schemeup.application.settings import Settings
@@ -57,6 +58,8 @@ class Environment:
     register_hotkey: Callable[[str], str]  # returns an error message, empty when it worked
     hotkey_supported: bool
     reduce_motion: bool
+    exporter: Exporter | None = None
+    importer: Importer | None = None
 
 
 def system_prefers_dark() -> bool:
@@ -96,7 +99,9 @@ class MainWindow(QMainWindow):
         self.editor = EditorPage(
             session, self._theme, assets=assets, reduce_motion=env.reduce_motion
         )
-        self.editor.export_button.hide()  # export arrives with the export dialog
+        self.editor.export_requested.connect(self.export_note)
+        self.editor.canvas.copy_png_requested.connect(self.copy_png)
+        self._assets = assets
         self.editor.title_changed.connect(self._rename_current)
         self.tags = TagEditor(self._theme)
         self.tags.changed.connect(self._set_tags)
@@ -132,6 +137,7 @@ class MainWindow(QMainWindow):
         self.sidebar.theme_toggled.connect(self.toggle_theme)
         self.sidebar.page_requested.connect(self._show_page)
         self.sidebar.board_activated.connect(self.show_board)
+        self.sidebar.import_requested.connect(self.import_note)
 
         self.toast = Toast(self._theme, self.pages)
         self.command_palette = CommandPalette(
@@ -472,6 +478,7 @@ class MainWindow(QMainWindow):
             PaletteCommand(tr("Open calendar"), self.show_calendar, "", "calendar", "dates days"),
             PaletteCommand(tr("Open boards"), self.show_boards, "", "layout-kanban", "kanban"),
             PaletteCommand(tr("New board"), self.new_board, "", "layout-kanban", "kanban trello"),
+            PaletteCommand(tr("Import a file…"), self.import_note, "", "upload", "excalidraw open"),
         ]
         for template in TEMPLATES[2:]:
             commands.append(
@@ -499,6 +506,12 @@ class MainWindow(QMainWindow):
                     lambda: canvas.set_snapping(grid=not canvas.snap_grid),
                     "Ctrl+'",
                     "grid-dots",
+                ),
+                PaletteCommand(
+                    tr("Export…"), self.export_note, "Ctrl+Shift+E", "download", "pdf png svg word"
+                ),
+                PaletteCommand(
+                    tr("Copy as PNG"), self.copy_png, "Shift+Alt+C", "copy", "clipboard image"
                 ),
                 PaletteCommand(tr("Rename note"), self._focus_title, "F2", "file-text"),
                 PaletteCommand(tr("Duplicate note"), self._duplicate_current, "", "copy"),
@@ -541,6 +554,71 @@ class MainWindow(QMainWindow):
         if self._note is not None:
             self.open_note(self._library.duplicate_note(self._note.id).id)
 
+    def export_note(self) -> None:
+        if self._note is None or self._env.exporter is None:
+            return
+        from schemeup.ui.export_dialog import ExportDialog
+
+        self.flush()
+        dialog = ExportDialog(
+            self._session.document,
+            self._session.selection,
+            self._note.title,
+            self._note.tags,
+            self.editor.canvas.renderer,
+            self._env.exporter,
+            self._theme,
+            self,
+        )
+        if dialog.exec() == ExportDialog.DialogCode.Accepted and dialog.exported_path is not None:
+            self.toast.show_message(self.tr("Exported %1").replace("%1", dialog.exported_path.name))
+
+    def copy_png(self) -> None:
+        from schemeup.rendering.export_render import export_region, render_image
+
+        document = self._session.document
+        selection = self._session.selection
+        region = export_region(document, selection)
+        if region is None:
+            return
+        image = render_image(
+            document,
+            region,
+            self.editor.canvas.renderer,
+            2.0,
+            dark=self._theme.dark,
+            only=selection or None,
+        )
+        QGuiApplication.clipboard().setImage(image)
+        self.toast.show_message(self.tr("Copied as PNG"))
+
+    def import_note(self) -> None:
+        if self._env.importer is None:
+            return
+        from PySide6.QtWidgets import QFileDialog
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            self.tr("Import"),
+            "",
+            self.tr("Excalidraw or SchemeUp files (*.excalidraw *.schemeup *.json)"),
+        )
+        if not path:
+            return
+        try:
+            imported = self._env.importer.read(Path(path))
+            if self._assets is not None:
+                for content in imported.files.values():
+                    self._assets.put(content, "image/png")
+            note = self._library.import_document(imported.title, imported.document)
+            if imported.tags:
+                self._library.set_tags(note.id, imported.tags)
+        except SchemeUpError as error:
+            QMessageBox.warning(self, self.tr("Import failed"), str(error))
+            return
+        self.open_note(note.id)
+        self.toast.show_message(self.tr("Imported %1").replace("%1", note.title))
+
     def _focus_title(self) -> None:
         self.editor.title_edit.setFocus()
         self.editor.title_edit.selectAll()
@@ -554,6 +632,7 @@ class MainWindow(QMainWindow):
             (("Alt+Shift+D",), self.toggle_theme),
             (("Ctrl+,",), self.open_settings),
             (("Ctrl+W",), self.close_note),
+            (("Ctrl+Shift+E",), self.export_note),
             (("Ctrl+S",), self.flush),
             (("F2",), self._focus_title),
             (("Ctrl+Q",), self.quit),

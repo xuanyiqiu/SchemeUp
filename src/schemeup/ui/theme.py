@@ -63,7 +63,22 @@ DARK = Theme(
 )
 
 
+def icon_file(name: str, color: str, size: int = 16) -> str:
+    """A recolored icon written to a cache file, for stylesheets that need a url()."""
+    import tempfile
+    from pathlib import Path
+
+    folder = Path(tempfile.gettempdir()) / "schemeup-icons"
+    folder.mkdir(exist_ok=True)
+    path = folder / f"{name}-{color.lstrip('#')}-{size}.png"
+    if not path.exists():
+        icon(name, color, 2.0).pixmap(QSize(size, size)).save(str(path))
+    return path.as_posix()
+
+
 def stylesheet(t: Theme) -> str:
+    closed = icon_file("chevron-right", t.muted)
+    opened = icon_file("chevron-down", t.muted)
     return f"""
     QWidget {{ color: {t.text}; font-size: 13px; }}
     QMainWindow, #page {{ background: {t.window}; }}
@@ -117,7 +132,9 @@ def stylesheet(t: Theme) -> str:
     }}
     QTreeView::item, QListView::item {{ padding: 4px 2px; border-radius: 6px; }}
     QTreeView {{ show-decoration-selected: 0; }}
-    QTreeView::branch {{ background: transparent; }}
+    QTreeView::branch {{ background: transparent; border-image: none; image: none; }}
+    QTreeView::branch:has-children:closed {{ image: url({closed}); }}
+    QTreeView::branch:has-children:open {{ image: url({opened}); }}
     QTreeView::item:hover, QListView::item:hover {{ background: {t.hover}; }}
     QTreeView::item:selected, QListView::item:selected {{
         background: {t.accent_soft}; color: {t.text};
