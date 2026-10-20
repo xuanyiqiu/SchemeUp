@@ -30,10 +30,17 @@ class SheetStyle:
                 return self.accent
 
 
+# Translucent colors, so the lines look right on any background color.
 LIGHT_SHEET_STYLE = SheetStyle(
-    minor=QColor("#e1e1e8"),
-    major=QColor("#c8c8d2"),
-    accent=QColor("#f2a7a7"),
+    minor=QColor(30, 30, 60, 30),
+    major=QColor(30, 30, 60, 58),
+    accent=QColor(230, 70, 70, 150),
+)
+
+DARK_SHEET_STYLE = SheetStyle(
+    minor=QColor(255, 255, 255, 22),
+    major=QColor(255, 255, 255, 42),
+    accent=QColor(255, 120, 120, 130),
 )
 
 

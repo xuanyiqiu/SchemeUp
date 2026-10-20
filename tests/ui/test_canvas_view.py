@@ -4,15 +4,17 @@ from PySide6.QtGui import QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
+from schemeup.application.editor import EditorSession
 from schemeup.domain.camera import MAX_ZOOM, Camera
+from schemeup.domain.document import Document
 from schemeup.domain.geometry import Point
-from schemeup.domain.sheets import GridSheet
-from schemeup.ui.canvas_view import ZOOM_PER_NOTCH, CanvasView
+from schemeup.rendering.text import QtTextMeasurer
+from schemeup.ui.canvas.view import ZOOM_PER_NOTCH, CanvasView
 
 
 @pytest.fixture
 def view(qtbot: QtBot) -> CanvasView:
-    canvas = CanvasView(GridSheet())
+    canvas = CanvasView(EditorSession(Document(), QtTextMeasurer()))
     qtbot.addWidget(canvas)
     canvas.resize(800, 600)
     canvas.show()
@@ -158,7 +160,7 @@ def test_recenter_can_be_interrupted_without_a_jump(qtbot: QtBot, view: CanvasVi
 
 @pytest.fixture
 def calm_view(qtbot: QtBot) -> CanvasView:
-    canvas = CanvasView(GridSheet(), reduce_motion=True)
+    canvas = CanvasView(EditorSession(Document(), QtTextMeasurer()), reduce_motion=True)
     qtbot.addWidget(canvas)
     canvas.resize(800, 600)
     canvas.show()
