@@ -1,0 +1,93 @@
+[project]
+name = "schemeup"
+dynamic = ["version"]
+description = "Offline whiteboard notes with folders, boards and a calendar."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Xuanyi Qiu" }]
+requires-python = ">=3.12"
+dependencies = [
+    "PySide6-Essentials>=6.10",
+]
+
+[project.gui-scripts]
+schemeup = "schemeup.app:main"
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.100",
+    "import-linter>=2.1",
+    "mypy>=1.15",
+    "pre-commit>=4.0",
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "pytest-qt>=4.4",
+    "ruff>=0.11",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/schemeup/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/schemeup"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "N"]
+# Qt event handlers are camelCase overrides (paintEvent, wheelEvent...).
+ignore = ["N802"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["src", "tests"]
+warn_unreachable = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--import-mode=importlib"]
+qt_api = "pyside6"
+
+[tool.coverage.run]
+source = ["schemeup"]
+branch = true
+
+[tool.importlinter]
+root_package = "schemeup"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "UI stack is layered"
+type = "layers"
+layers = ["schemeup.ui", "schemeup.application", "schemeup.domain"]
+
+[[tool.importlinter.contracts]]
+name = "Infrastructure stack is layered"
+type = "layers"
+layers = ["schemeup.infrastructure", "schemeup.application", "schemeup.domain"]
+
+[[tool.importlinter.contracts]]
+name = "UI and infrastructure don't know each other"
+type = "independence"
+modules = ["schemeup.ui", "schemeup.infrastructure"]
+
+[[tool.importlinter.contracts]]
+name = "Rendering only depends on the domain"
+type = "forbidden"
+source_modules = ["schemeup.rendering"]
+forbidden_modules = ["schemeup.ui", "schemeup.application", "schemeup.infrastructure"]
+
+[[tool.importlinter.contracts]]
+name = "Domain and application stay free of Qt"
+type = "forbidden"
+source_modules = ["schemeup.domain", "schemeup.application"]
+forbidden_modules = ["PySide6", "shiboken6"]
