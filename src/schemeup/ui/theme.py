@@ -78,6 +78,7 @@ def stylesheet(t: Theme) -> str:
     QToolButton:pressed {{ background: {t.accent_soft}; }}
     QToolButton:checked {{ background: {t.accent_soft}; }}
     QToolButton:disabled {{ color: {t.muted}; }}
+    QToolButton#bare::menu-indicator {{ image: none; width: 0; }}
     QPushButton {{
         background: {t.input}; border: 1px solid {t.border}; border-radius: 7px; padding: 6px 12px;
     }}

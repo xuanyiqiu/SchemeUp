@@ -27,6 +27,8 @@ from schemeup.domain.elements import Text
 from schemeup.domain.errors import SchemeUpError
 from schemeup.domain.library import NoteInfo
 from schemeup.domain.templates import TEMPLATES
+from schemeup.ui.board_view import BoardView
+from schemeup.ui.calendar_view import CalendarView
 from schemeup.ui.canvas.tools import ToolKind
 from schemeup.ui.capture import CaptureWindow
 from schemeup.ui.editor_page import EditorPage
@@ -105,9 +107,16 @@ class MainWindow(QMainWindow):
         self.welcome.template_chosen.connect(lambda t: self.new_note(None, t))
         self.welcome.note_chosen.connect(self.open_note)
 
+        self.board_view = BoardView(library, self._theme)
+        self.board_view.note_opened.connect(self.open_note)
+        self.calendar_view = CalendarView(library, self._theme)
+        self.calendar_view.note_opened.connect(self.open_note)
+
         self.pages = QStackedWidget()
         self.pages.addWidget(self.welcome)
         self.pages.addWidget(self.editor)
+        self.pages.addWidget(self.board_view)
+        self.pages.addWidget(self.calendar_view)
         self.splitter = QSplitter()
         self.splitter.addWidget(self.sidebar)
         self.splitter.addWidget(self.pages)
@@ -122,6 +131,7 @@ class MainWindow(QMainWindow):
         self.sidebar.settings_requested.connect(self.open_settings)
         self.sidebar.theme_toggled.connect(self.toggle_theme)
         self.sidebar.page_requested.connect(self._show_page)
+        self.sidebar.board_activated.connect(self.show_board)
 
         self.toast = Toast(self._theme, self.pages)
         self.command_palette = CommandPalette(
@@ -288,6 +298,7 @@ class MainWindow(QMainWindow):
 
     def _show_editor(self) -> None:
         self.pages.setCurrentWidget(self.editor)
+        self.sidebar.show_page(Page.NOTES)
 
     def _show_page(self, page: object) -> None:
         if page == Page.NOTES:
@@ -295,6 +306,31 @@ class MainWindow(QMainWindow):
                 self._show_editor()
             else:
                 self.pages.setCurrentWidget(self.welcome)
+        elif page == Page.CALENDAR:
+            self.flush()
+            self.calendar_view.refresh()
+            self.pages.setCurrentWidget(self.calendar_view)
+        elif page == Page.BOARDS:
+            self.flush()
+            self.board_view.refresh()
+            self.pages.setCurrentWidget(self.board_view)
+
+    def show_board(self, board_id: int) -> None:
+        self.flush()
+        self.sidebar.show_page(Page.BOARDS)
+        self.board_view.show_board(board_id)
+        self.pages.setCurrentWidget(self.board_view)
+
+    def show_calendar(self) -> None:
+        self.sidebar.show_page(Page.CALENDAR)
+        self._show_page(Page.CALENDAR)
+
+    def show_boards(self) -> None:
+        self.sidebar.show_page(Page.BOARDS)
+        self._show_page(Page.BOARDS)
+
+    def new_board(self) -> None:
+        self.show_board(self._library.create_board(self.tr("New board")).id)
 
     def _remember_snapping(self) -> None:
         self._settings.snap_objects = self.editor.canvas.snap_objects
@@ -355,6 +391,8 @@ class MainWindow(QMainWindow):
         self.sidebar.set_theme(theme)
         self.editor.set_theme(theme)
         self.welcome.set_theme(theme)
+        self.board_view.set_theme(theme)
+        self.calendar_view.set_theme(theme)
         self.tags.set_theme(theme)
         self.toast.set_theme(theme)
         self.command_palette.set_theme(theme)
@@ -431,6 +469,9 @@ class MainWindow(QMainWindow):
                 "trash",
                 "deleted",
             ),
+            PaletteCommand(tr("Open calendar"), self.show_calendar, "", "calendar", "dates days"),
+            PaletteCommand(tr("Open boards"), self.show_boards, "", "layout-kanban", "kanban"),
+            PaletteCommand(tr("New board"), self.new_board, "", "layout-kanban", "kanban trello"),
         ]
         for template in TEMPLATES[2:]:
             commands.append(
