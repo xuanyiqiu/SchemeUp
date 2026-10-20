@@ -46,6 +46,10 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "N"]
 # Qt event handlers are camelCase overrides (paintEvent, wheelEvent...).
 ignore = ["N802"]
 
+[tool.ruff.lint.per-file-ignores]
+# SQL statements read better on one line than chopped into pieces.
+"src/schemeup/infrastructure/library_store.py" = ["E501"]
+
 [tool.mypy]
 strict = true
 python_version = "3.12"

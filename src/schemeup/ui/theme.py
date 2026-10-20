@@ -115,6 +115,8 @@ def stylesheet(t: Theme) -> str:
         background: transparent; border: none; outline: none;
     }}
     QTreeView::item, QListView::item {{ padding: 4px 2px; border-radius: 6px; }}
+    QTreeView {{ show-decoration-selected: 0; }}
+    QTreeView::branch {{ background: transparent; }}
     QTreeView::item:hover, QListView::item:hover {{ background: {t.hover}; }}
     QTreeView::item:selected, QListView::item:selected {{
         background: {t.accent_soft}; color: {t.text};

@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from schemeup.domain.palette import SWATCHES, PickerKind, is_valid_hex
+from schemeup.domain.palette import SWATCHES, PickerKind, dark_variant, is_valid_hex
 from schemeup.domain.style import TRANSPARENT
 from schemeup.ui.theme import Theme
 
@@ -78,6 +78,7 @@ class SwatchButton(QToolButton):
     def __init__(self, color: str, size: int = 22, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.color = color
+        self.dark = False  # show the color the way the dark canvas renders it
         self.selected = False
         self.ring = QColor("#6d5dfc")
         self.border = QColor(0, 0, 0, 40)
@@ -101,7 +102,8 @@ class SwatchButton(QToolButton):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(0, 0, 0, 18))
             painter.drawRoundedRect(QRectF(self.rect()), 7, 7)
-        paint_swatch(painter, inner, self.color, self.border)
+        shown = dark_variant(self.color) if self.dark else self.color
+        paint_swatch(painter, inner, shown, self.border)
         painter.end()
 
 
@@ -322,6 +324,7 @@ class ColorRow(QWidget):
         for button in [*self._swatches, self._last, self._big]:
             button.ring = ring
             button.border = border
+            button.dark = theme.dark
             button.update()
         self._divider.setStyleSheet(f"background: {theme.border}; border: none;")
         self._popover = None

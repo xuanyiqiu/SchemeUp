@@ -80,6 +80,11 @@ class EditorPage(QWidget):
         self.export_button.setIconSize(QSize(18, 18))
         self.export_button.clicked.connect(self.export_requested.emit)
         title_layout.addWidget(self.title_edit, 1)
+        # Room for extra widgets (the tag chips) between the title and the details.
+        self.title_extras = QHBoxLayout()
+        self.title_extras.setSpacing(6)
+        title_layout.addLayout(self.title_extras)
+        title_layout.addSpacing(10)
         title_layout.addWidget(self.meta_label)
         title_layout.addSpacing(8)
         title_layout.addWidget(self.export_button)
