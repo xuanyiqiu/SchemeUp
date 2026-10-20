@@ -4,7 +4,7 @@ from PySide6.QtGui import QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
-from schemeup.domain.camera import Camera
+from schemeup.domain.camera import MAX_ZOOM, Camera
 from schemeup.domain.geometry import Point
 from schemeup.domain.sheets import GridSheet
 from schemeup.ui.canvas_view import ZOOM_PER_NOTCH, CanvasView
@@ -99,3 +99,58 @@ def test_recenter_button_animates_back_to_the_origin(qtbot: QtBot, view: CanvasV
 def test_zoom_label_follows_the_camera(view: CanvasView) -> None:
     view.set_camera(Camera(0, 0, 2.0))
     assert view.zoom_button.text() == "200%"
+
+
+def test_zoom_past_the_limit_stretches_then_springs_back(qtbot: QtBot, view: CanvasView) -> None:
+    anchor = Point(300, 200)
+    view.set_camera(Camera(0, 0, MAX_ZOOM))
+    world = view.camera.to_world(anchor)
+
+    for _ in range(3):
+        send_wheel(view, QPointF(anchor.x, anchor.y), 120, ctrl=True)
+    qtbot.waitUntil(lambda: view.camera.zoom > MAX_ZOOM * 1.01)
+    qtbot.waitUntil(lambda: not view.is_animating)
+
+    assert view.camera.zoom == pytest.approx(MAX_ZOOM)
+    settled = view.camera.to_world(anchor)
+    assert settled.x == pytest.approx(world.x)
+    assert settled.y == pytest.approx(world.y)
+
+
+def test_fast_drag_release_keeps_gliding(qtbot: QtBot, view: CanvasView) -> None:
+    middle = Qt.MouseButton.MiddleButton
+    send_mouse(view, QEvent.Type.MouseButtonPress, QPointF(100, 100), middle)
+    send_mouse(view, QEvent.Type.MouseMove, QPointF(140, 100), middle)
+    send_mouse(view, QEvent.Type.MouseButtonRelease, QPointF(140, 100), Qt.MouseButton.NoButton)
+    released_at = view.camera.to_screen(Point(0, 0)).x
+
+    assert view.is_animating
+    qtbot.wait(100)
+    assert view.camera.to_screen(Point(0, 0)).x > released_at + 10
+
+
+def test_grabbing_the_canvas_stops_a_glide(qtbot: QtBot, view: CanvasView) -> None:
+    middle = Qt.MouseButton.MiddleButton
+    send_mouse(view, QEvent.Type.MouseButtonPress, QPointF(100, 100), middle)
+    send_mouse(view, QEvent.Type.MouseMove, QPointF(140, 100), middle)
+    send_mouse(view, QEvent.Type.MouseButtonRelease, QPointF(140, 100), Qt.MouseButton.NoButton)
+    qtbot.wait(50)
+
+    send_mouse(view, QEvent.Type.MouseButtonPress, QPointF(200, 200), middle)
+    caught_at = view.camera
+    qtbot.wait(50)
+    assert view.camera == caught_at
+    assert not view.is_animating
+
+
+def test_recenter_can_be_interrupted_without_a_jump(qtbot: QtBot, view: CanvasView) -> None:
+    view.set_camera(Camera(5000, -3000, 1.0))
+    view.recenter()
+    qtbot.wait(60)
+    before = view.camera
+
+    send_wheel(view, QPointF(400, 300), -120, ctrl=False)
+    after = view.camera
+    # Taking over starts from the camera on screen, not from where the spring was heading.
+    assert after == before
+    qtbot.waitUntil(lambda: not view.is_animating)

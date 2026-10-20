@@ -1,21 +1,17 @@
 """The infinite canvas widget.
 
 For now it draws the sheet and owns the camera: zoom around the cursor,
-pan with inertia, and an animated jump back to the content.
+pan with inertia, and a spring back to the content.
+
+Every camera motion is a spring or an exponential glide that starts from
+the current on-screen state, so any of them can be interrupted or redirected
+at any moment without a jump.
 """
 
 import math
+from dataclasses import replace
 
-from PySide6.QtCore import (
-    QEasingCurve,
-    QElapsedTimer,
-    QEvent,
-    QPointF,
-    Qt,
-    QTimer,
-    QVariantAnimation,
-    Signal,
-)
+from PySide6.QtCore import QElapsedTimer, QEvent, QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -31,18 +27,19 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QToolButton, QWidget
 
-from schemeup.domain.camera import Camera, clamp_zoom
+from schemeup.domain.camera import Camera, CameraSpring, clamp_zoom, soft_clamp_zoom
 from schemeup.domain.geometry import Point, Size
-from schemeup.domain.kinetics import Inertia, VelocityTracker
+from schemeup.domain.kinetics import Inertia, Spring, VelocityTracker
 from schemeup.domain.sheets import Sheet
 from schemeup.rendering.sheet_painter import LIGHT_SHEET_STYLE, paint_sheet
 
 WHEEL_NOTCH = 120  # angleDelta units for one click of a normal mouse wheel
 ZOOM_PER_NOTCH = 1.2
 PAN_PER_NOTCH = 80.0  # screen pixels
-SMOOTHING_TIME = 0.06  # seconds for wheel zoom/pan to cover ~63% of the way to the target
-FRAME_INTERVAL_MS = 16
-RECENTER_DURATION_MS = 320
+WHEEL_RESPONSE = 0.15  # snappy springs that smooth out the steps of a mouse wheel
+RECENTER_RESPONSE = 0.4  # Apple's response for moving something into place
+BOUNCE_BACK_RESPONSE = 0.3  # a rubber-banded zoom returning to its limit
+ZOOM_SETTLE_MS = 150  # quiet time after zoom input before an overshoot springs back
 OVERLAY_MARGIN = 16
 
 OVERLAY_STYLE = """
@@ -54,11 +51,17 @@ QToolButton {
     padding: 6px 12px;
 }
 QToolButton:hover { background: #f1f0ff; }
+QToolButton:pressed { background: #e2deff; }
 """
 
 
 def _point(p: QPointF) -> Point:
     return Point(p.x(), p.y())
+
+
+def _wheel_spring(response: float = WHEEL_RESPONSE) -> Spring:
+    # Pan offsets are in screen pixels: rest within 0.1 px and 1 px/s.
+    return Spring(0.0, 0.0, response=response, rest_distance=0.1, rest_speed=1.0)
 
 
 class CanvasView(QWidget):
@@ -71,35 +74,32 @@ class CanvasView(QWidget):
         self._camera = Camera()
         self._has_viewport = False
 
-        # Wheel input only moves a target; the frame timer eases the camera towards
-        # it. That turns the 120-unit jumps of a mouse wheel into smooth motion.
-        self._zoom_target: float | None = None
+        # Each kind of motion is its own channel, stepped by the frame timer.
+        # They add up, so zooming doesn't kill a glide that is still running.
+        self._zoom_spring: Spring | None = None  # in log zoom
+        self._zoom_request: float | None = None  # log zoom asked for, before the soft clamp
         self._zoom_anchor = Point(0, 0)
-        self._pending_pan = Point(0, 0)
+        self._pan_springs: tuple[Spring, Spring] | None = None  # wheel pan offset in x and y
+        self._inertia: Inertia | None = None
+        self._camera_spring: CameraSpring | None = None
 
         self._panning = False
         self._pan_button = Qt.MouseButton.NoButton
         self._space_held = False
         self._last_pan_pos = Point(0, 0)
         self._velocity = VelocityTracker()
-        self._inertia: Inertia | None = None
 
         self._clock = QElapsedTimer()
         self._clock.start()
         self._last_frame = 0.0
         self._frame_timer = QTimer(self)
         self._frame_timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._frame_timer.setInterval(FRAME_INTERVAL_MS)
         self._frame_timer.timeout.connect(self._on_frame)
 
-        self._animation = QVariantAnimation(self)
-        self._animation.setDuration(RECENTER_DURATION_MS)
-        self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._animation.setStartValue(0.0)
-        self._animation.setEndValue(1.0)
-        self._animation.valueChanged.connect(self._on_animation_step)
-        self._animation_from = self._camera
-        self._animation_to = self._camera
+        self._zoom_settle = QTimer(self)
+        self._zoom_settle.setSingleShot(True)
+        self._zoom_settle.setInterval(ZOOM_SETTLE_MS)
+        self._zoom_settle.timeout.connect(self._settle_zoom)
 
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         # paintEvent covers every pixel, so Qt can skip clearing the background.
@@ -127,10 +127,7 @@ class CanvasView(QWidget):
 
     @property
     def is_animating(self) -> bool:
-        return (
-            self._frame_timer.isActive()
-            or self._animation.state() == QVariantAnimation.State.Running
-        )
+        return self._frame_timer.isActive() or self._zoom_settle.isActive()
 
     def set_camera(self, camera: Camera) -> None:
         if camera == self._camera:
@@ -141,23 +138,26 @@ class CanvasView(QWidget):
         self.update()
 
     def recenter(self) -> None:
-        """Animate back to the content. There is no content yet, so that's the origin."""
+        """Spring back to the content. There is no content yet, so that's the origin."""
+        velocity = self._inertia.velocity if self._inertia is not None else Point(0, 0)
+        zoom_velocity = self._zoom_spring.velocity if self._zoom_spring is not None else 0.0
         self._stop_motion()
-        self._animation_from = self._camera
-        self._animation_to = self._home_camera()
-        self._animation.start()
+        self._camera_spring = CameraSpring.between(
+            self._camera,
+            self._home_camera(),
+            self._viewport(),
+            velocity=velocity,
+            zoom_velocity=zoom_velocity,
+            response=RECENTER_RESPONSE,
+        )
+        self._start_frames()
 
     def zoom_to(self, zoom: float, anchor: Point | None = None) -> None:
         """Smoothly zoom to `zoom`, keeping `anchor` (default: the viewport center) fixed."""
-        self._animation.stop()
-        self._inertia = None
-        self._zoom_anchor = anchor if anchor is not None else self._viewport_center()
-        self._zoom_target = clamp_zoom(zoom)
-        self._start_frames()
+        self._request_zoom(math.log(clamp_zoom(zoom)), anchor, smooth=True)
 
     def zoom_by(self, factor: float, anchor: Point | None = None) -> None:
-        base = self._zoom_target if self._zoom_target is not None else self._camera.zoom
-        self.zoom_to(base * factor, anchor)
+        self._request_zoom(self._zoom_base() + math.log(factor), anchor, smooth=True)
 
     def reset_zoom(self) -> None:
         self.zoom_to(1.0)
@@ -192,12 +192,8 @@ class CanvasView(QWidget):
         )
 
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            factor = ZOOM_PER_NOTCH ** (angle.y() / WHEEL_NOTCH)
-            if notched:
-                self.zoom_by(factor, anchor)
-            else:
-                self._stop_motion()
-                self.set_camera(self._camera.zoomed_at(anchor, factor))
+            log_factor = math.log(ZOOM_PER_NOTCH) * angle.y() / WHEEL_NOTCH
+            self._request_zoom(self._zoom_base() + log_factor, anchor, smooth=notched)
         else:
             if pixel.isNull():
                 dx = angle.x() / WHEEL_NOTCH * PAN_PER_NOTCH
@@ -207,11 +203,13 @@ class CanvasView(QWidget):
             if event.modifiers() & Qt.KeyboardModifier.ShiftModifier and dx == 0:
                 dx, dy = dy, 0.0
             if notched:
-                self._animation.stop()
-                self._pending_pan = self._pending_pan + Point(dx, dy)
+                self._interrupt_camera_spring()
+                sx, sy = self._pan_springs or (_wheel_spring(), _wheel_spring())
+                self._pan_springs = (sx.retargeted(sx.target + dx), sy.retargeted(sy.target + dy))
                 self._start_frames()
             else:
-                self._stop_motion()
+                # Fingers on the touchpad catch any glide, like touching a scrolling list.
+                self._stop_pan_motion()
                 self.set_camera(self._camera.panned_by(dx, dy))
         event.accept()
 
@@ -221,8 +219,10 @@ class CanvasView(QWidget):
             isinstance(event, QNativeGestureEvent)
             and event.gestureType() == Qt.NativeGestureType.ZoomNativeGesture
         ):
-            self._stop_motion()
-            self.set_camera(self._camera.zoomed_at(_point(event.position()), 1.0 + event.value()))
+            log_factor = math.log1p(event.value())
+            self._request_zoom(
+                self._zoom_base() + log_factor, _point(event.position()), smooth=False
+            )
             return True
         return super().event(event)
 
@@ -234,7 +234,8 @@ class CanvasView(QWidget):
         if not starts_pan or self._panning:
             super().mousePressEvent(event)
             return
-        self._stop_motion()
+        # Grabbing the canvas catches it: any glide stops right where it is.
+        self._stop_pan_motion()
         self._panning = True
         self._pan_button = button
         self._last_pan_pos = _point(event.position())
@@ -289,27 +290,73 @@ class CanvasView(QWidget):
 
     # Internals
 
+    def _request_zoom(self, log_zoom: float, anchor: Point | None, smooth: bool) -> None:
+        """Zoom towards `log_zoom`. Past the limits the zoom stretches a little and
+        springs back once the input stops."""
+        self._interrupt_camera_spring()
+        self._zoom_request = log_zoom
+        self._zoom_anchor = anchor if anchor is not None else self._viewport_center()
+        target = math.log(soft_clamp_zoom(math.exp(log_zoom)))
+        if smooth:
+            spring = self._zoom_spring or Spring(
+                math.log(self._camera.zoom),
+                target,
+                response=WHEEL_RESPONSE,
+                rest_distance=1e-4,
+                rest_speed=1e-3,
+            )
+            self._zoom_spring = spring.retargeted(target)
+            self._start_frames()
+        else:
+            self._zoom_spring = None
+            self.set_camera(self._camera.with_zoom_at(self._zoom_anchor, math.exp(target)))
+        self._zoom_settle.start()
+
+    def _zoom_base(self) -> float:
+        """Log zoom that new relative zoom input builds on, so fast wheel clicks add up."""
+        if self._zoom_request is not None:
+            return self._zoom_request
+        return math.log(self._camera.zoom)
+
+    def _settle_zoom(self) -> None:
+        self._zoom_request = None
+        current = self._zoom_spring.target if self._zoom_spring else math.log(self._camera.zoom)
+        limit = math.log(clamp_zoom(math.exp(current)))
+        if math.isclose(current, limit):
+            return
+        spring = self._zoom_spring or Spring(
+            math.log(self._camera.zoom), limit, rest_distance=1e-4, rest_speed=1e-3
+        )
+        self._zoom_spring = replace(spring, target=limit, response=BOUNCE_BACK_RESPONSE)
+        self._start_frames()
+
     def _on_frame(self) -> None:
         now = self._now()
         # A stalled frame (window drag, breakpoint) shouldn't make the camera jump.
         dt = min(now - self._last_frame, 0.05)
         self._last_frame = now
         camera = self._camera
-        catch_up = 1.0 - math.exp(-dt / SMOOTHING_TIME)
 
-        if self._zoom_target is not None:
-            ratio = self._zoom_target / camera.zoom
-            if abs(math.log(ratio)) < 1e-3:
-                camera = camera.zoomed_at(self._zoom_anchor, ratio)
-                self._zoom_target = None
+        if self._camera_spring is not None:
+            glide = self._camera_spring.step(dt)
+            self._camera_spring = None if glide.at_rest else glide
+            camera = (glide.settled() if glide.at_rest else glide).camera(self._viewport())
+
+        if self._zoom_spring is not None:
+            zoom = self._zoom_spring.step(dt)
+            self._zoom_spring = None if zoom.at_rest else zoom
+            log_zoom = zoom.target if zoom.at_rest else zoom.value
+            camera = camera.with_zoom_at(self._zoom_anchor, math.exp(log_zoom))
+
+        if self._pan_springs is not None:
+            old_x, old_y = self._pan_springs
+            sx, sy = old_x.step(dt), old_y.step(dt)
+            if sx.at_rest and sy.at_rest:
+                sx, sy = sx.settled(), sy.settled()
+                self._pan_springs = None
             else:
-                camera = camera.zoomed_at(self._zoom_anchor, ratio**catch_up)
-
-        pending = self._pending_pan
-        if pending.length() > 0:
-            step = pending if pending.length() < 0.5 else pending * catch_up
-            camera = camera.panned_by(step.x, step.y)
-            self._pending_pan = pending - step
+                self._pan_springs = (sx, sy)
+            camera = camera.panned_by(sx.value - old_x.value, sy.value - old_y.value)
 
         if self._inertia is not None:
             delta, inertia = self._inertia.step(dt)
@@ -317,24 +364,45 @@ class CanvasView(QWidget):
             self._inertia = inertia if inertia.active else None
 
         self.set_camera(camera)
-        if self._zoom_target is None and self._pending_pan.length() == 0 and self._inertia is None:
+        if not self._has_motion():
             self._frame_timer.stop()
 
-    def _on_animation_step(self, value: object) -> None:
-        t = float(value) if isinstance(value, (int, float)) else 1.0
-        self.set_camera(self._animation_from.interpolate(self._animation_to, t, self._viewport()))
+    def _has_motion(self) -> bool:
+        return (
+            self._camera_spring is not None
+            or self._zoom_spring is not None
+            or self._pan_springs is not None
+            or self._inertia is not None
+        )
 
     def _start_frames(self) -> None:
-        if not self._frame_timer.isActive():
-            self._last_frame = self._now()
-            self._frame_timer.start()
+        if self._frame_timer.isActive():
+            return
+        # One tick per display refresh, so 120 and 144 Hz screens get every frame.
+        refresh = max(self.screen().refreshRate(), 30.0)
+        self._frame_timer.setInterval(max(1, round(1000 / refresh)))
+        self._last_frame = self._now()
+        self._frame_timer.start()
+
+    def _interrupt_camera_spring(self) -> None:
+        """New input takes over from a recenter in progress. Its speed becomes a
+        glide, so the motion blends into the new input instead of stopping dead."""
+        if self._camera_spring is None:
+            return
+        inertia = Inertia.launch(self._camera_spring.screen_velocity())
+        self._inertia = inertia if inertia.active else None
+        self._camera_spring = None
+
+    def _stop_pan_motion(self) -> None:
+        self._camera_spring = None
+        self._pan_springs = None
+        self._inertia = None
 
     def _stop_motion(self) -> None:
-        self._animation.stop()
-        self._frame_timer.stop()
-        self._zoom_target = None
-        self._pending_pan = Point(0, 0)
-        self._inertia = None
+        self._stop_pan_motion()
+        self._zoom_spring = None
+        self._zoom_request = None
+        self._zoom_settle.stop()
 
     def _home_camera(self) -> Camera:
         return self._camera.centered_on(Point(0, 0), self._viewport(), zoom=1.0)
