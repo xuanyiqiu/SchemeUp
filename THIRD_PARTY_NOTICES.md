@@ -22,6 +22,10 @@ The fonts in `src/schemeup/resources/fonts` are licensed under the SIL Open Font
 
 The icons in `src/schemeup/resources/icons` come from Tabler Icons, copyright (c) 2020-2026 Paweł Kuna, MIT License (https://github.com/tabler/tabler-icons). The license text is in `resources/icons/LICENSE-tabler.txt`.
 
+## python-docx and lxml
+
+Word export uses python-docx, copyright (c) 2013 Steve Canny, MIT License (https://github.com/python-openxml/python-docx). It depends on lxml, copyright (c) lxml dev team, BSD 3-Clause License (https://lxml.de/).
+
 ## Ported algorithms
 
 `src/schemeup/domain/rough.py` is a Python port of parts of rough.js, copyright (c) 2019 Preet Shihn, MIT License (https://github.com/rough-stuff/rough).

@@ -965,6 +965,24 @@ The CI workflow runs the linters on Ubuntu, then the tests on Windows and Ubuntu
 
 On my machine the window gets its first paint about 140 ms after the script starts (measured with the offscreen platform and a warm disk cache), so the startup budget has plenty of room for now.
 
+## Where the build differs from this plan
+
+A few things came out differently from what I wrote above, and I would rather say so than leave the plan looking like a description.
+
+Autosave runs on the UI thread. A save is one SQLite transaction on a small JSON text, and measuring it never showed a pause worth a worker thread, so the extra machinery isn't there. It is the first thing to revisit if a note ever grows large enough to notice.
+
+Snapping behaves differently from the plan in two ways. The grid is a weak magnet now, not a quantizer: it only catches within a short distance and never farther than a quarter of the cell, because rounding every position to whole cells made drags jump. And it has the hysteresis I planned: a snap that caught stays until the pointer is clearly away, and snapping pauses while the pointer moves fast, so it engages as I slow down to land. Both snapping kinds start switched off.
+
+The quick capture window is a plain text box that creates a note from its text, not a small canvas. It opens faster and covers what I actually capture, which is text.
+
+Paged notes follow the content instead of a fixed count of page frames. Pages stack until they cover whatever lies in the page column, a note also remembers a minimum count so Ctrl+Enter can add an empty page, and whatever touches no page stays in the note but is drawn faded and left out of exports and search.
+
+A text box now hugs its glyphs, from the tallest letters to just under the baseline, instead of using the font's own line height, which leaves about a third of the size empty above and below. The typing overlay is placed so the text does not move when editing ends.
+
+Presentation mode, focus mode, the year of activity on the welcome page and the data structure picker were not in this plan. The first of them was on the list of extras, and the others came from using the app.
+
+The "3x3x16" sheet from the requirements is still unconfirmed, as noted below.
+
 ## Open questions
 
 The reference images mentioned in the original requirements (the sheet types and the Stroke panel) weren't available when I wrote this. The Montessori 5 mm, double line 2.5/3/3.5 mm and 3x3x16 presets need their exact measurements checked against them. I read "2/5" in the original list as 2.5 mm, written with a decimal comma.
