@@ -22,6 +22,10 @@ When a note is set to A4, A5 or Letter it becomes a document of pages. A new pag
 
 For LeetCode notes the data structure picker (Ctrl+Shift+D, or the last button on the toolbar) draws arrays, matrices, linked lists, stacks, queues, binary trees and graphs from a line of text. A tree takes the same level-order list LeetCode shows, such as `1, 2, 3, null, 4`, and a graph takes edges such as `A-B, B-C:5, C->D`. The picker shows a live preview, Enter drops the result in the middle of the view as one group, and one undo takes it back. Arrows are bound to their nodes, so moving a node keeps the diagram connected.
 
+![An array with the plus and minus buttons that appear on its cells](docs/images/structure-buttons.png)
+
+A drawn structure stays editable. Point at it or select it and small buttons appear on its parts: a plus on the top right of a cell inserts a new cell after it and opens it for typing, and a minus on the bottom left deletes it. The other structures use the same idea where it fits. A matrix has buttons for rows beside the last column and for columns under the last row. A tree node can add a left or a right child where there is room, or delete itself with everything below it. A graph node adds a connected node or deletes itself with its edges. Each press is one undo step, and values typed into the cells by hand are kept.
+
 ![A graph drawn from a list of edges](docs/images/graph.png)
 
 Frames turn a note into slides. F5 presents them in reading order: the camera flies from one frame to the next, everything outside the current slide is dimmed, and a thin ribbon at the bottom shows where I am. Arrow keys, space, a click or the wheel move through the slides and Escape leaves. F11 is focus mode, which hides the sidebar and the panels and keeps only the tools.

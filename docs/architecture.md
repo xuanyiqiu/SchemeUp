@@ -981,6 +981,8 @@ A text box now hugs its glyphs, from the tallest letters to just under the basel
 
 Presentation mode, focus mode, the year of activity on the welcome page and the data structure picker were not in this plan. The first of them was on the list of extras, and the others came from using the app.
 
+A data structure drawn from the picker is ordinary elements in one group, with one difference: the shapes that hold a value carry a `structure` tag with the kind. The plus and minus buttons read the structure back from the canvas through that tag, change the model (a list of values, rows, a tree, a graph), and swap the old elements for a redrawn set in the same place and group. Reading from the canvas instead of storing a description means a value typed into a cell is never out of date. The price is that a redraw lays the structure out again, so nodes moved by hand in a tree or a graph go back to their places, and a structure whose links were edited into something that is no longer a tree is left alone and shows no buttons.
+
 The "3x3x16" sheet from the requirements is still unconfirmed, as noted below.
 
 ## Open questions
