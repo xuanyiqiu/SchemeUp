@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
+import tempfile
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
@@ -12,7 +13,7 @@ from pathlib import Path
 from PySide6.QtCore import QStandardPaths, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from schemeup import __version__
+from schemeup import __version__, smoke
 from schemeup.application.editor import EditorSession
 from schemeup.application.library import LibraryService
 from schemeup.domain.document import Document
@@ -44,13 +45,18 @@ def data_directory() -> Path:
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(argv) if argv is not None else sys.argv
     wants_capture = "--capture" in args
+    # `--smoke-test` starts up in a scratch folder, checks fonts, icons and every export
+    # format, and exits with 0 or 1. Packaged builds use it to prove they are whole.
+    smoke_test = "--smoke-test" in args
     app = QApplication(args)
     app.setApplicationName("SchemeUp")
     app.setApplicationVersion(__version__)
     # Closing the window keeps SchemeUp in the tray; quitting is explicit.
     app.setQuitOnLastWindowClosed(False)
 
-    if send_to_running("capture" if wants_capture else "show"):
+    if smoke_test:
+        os.environ["SCHEMEUP_DATA_DIR"] = tempfile.mkdtemp(prefix="schemeup-smoke-data-")
+    elif send_to_running("capture" if wants_capture else "show"):
         return 0
 
     register_fonts()
@@ -84,6 +90,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         except (OSError, SchemeUpError):
             return None
 
+    exporter = FileExporter(assets)
     configured = None if settings.motion == "system" else settings.motion
     motion = os.environ.get("SCHEMEUP_MOTION") or configured
     session = EditorSession(Document(), measurer)
@@ -102,11 +109,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         register_hotkey=register_hotkey,
         hotkey_supported=hotkey.supported,
         reduce_motion=wants_reduced_motion(motion),
-        exporter=FileExporter(assets),
+        exporter=exporter,
         importer=FileImporter(),
     )
     window = MainWindow(library, session, assets=assets, env=env)
-    hotkey_error = register_hotkey(settings.hotkey) if hotkey.supported else ""
+    hotkey_error = register_hotkey(settings.hotkey) if hotkey.supported and not smoke_test else ""
 
     def on_command(command: str) -> None:
         assert window is not None
@@ -116,7 +123,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             window.show_and_raise()
 
     server = InstanceServer(on_command)
-    server.listen()
+    if not smoke_test:
+        server.listen()
 
     if not settings.welcome_seen:
         with contextlib.suppress(SchemeUpError):
@@ -133,6 +141,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 window.open_note(note_info.id)
         except SchemeUpError:
             settings.last_note_id = None
+    if smoke_test:
+        report = Path(tempfile.gettempdir()) / "schemeup-smoke.txt"
+        QTimer.singleShot(500, lambda: smoke.finish(app, window, exporter, report))
     if wants_capture:
         QTimer.singleShot(0, window.quick_capture)
     if crashed:
