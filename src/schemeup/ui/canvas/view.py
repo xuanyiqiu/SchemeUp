@@ -690,7 +690,7 @@ class CanvasView(QWidget):
 
         viewport = self._viewport()
         sheet_style = DARK_SHEET_STYLE if dark else LIGHT_SHEET_STYLE
-        content = document.content_bounds()
+        content = document.content_bounds() if settings.page_size else None
         pages = page_rects(
             settings.page_size, settings.page_landscape, content.bottom if content else 0.0
         )
@@ -704,10 +704,10 @@ class CanvasView(QWidget):
                 painter.fillRect(screen_rect, background)
                 painter.save()
                 painter.setClipRect(screen_rect)
-                paint_sheet(painter, self._sheet(), self._camera, viewport, sheet_style)
+                paint_sheet(painter, self._sheet(), self._camera, viewport, sheet_style, background)
                 painter.restore()
         else:
-            paint_sheet(painter, self._sheet(), self._camera, viewport, sheet_style)
+            paint_sheet(painter, self._sheet(), self._camera, viewport, sheet_style, background)
 
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.save()

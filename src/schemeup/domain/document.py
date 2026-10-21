@@ -32,6 +32,10 @@ class Document:
     elements: Mapping[str, Element] = field(default_factory=dict)
     order: tuple[str, ...] = ()
     settings: CanvasSettings = CanvasSettings()
+    # Bounds of everything, filled on first use. Documents never change after
+    # creation, so the union over every element is computed once per version
+    # instead of once per repaint.
+    _bounds: list[Rect | None] = field(default_factory=list, init=False, repr=False, compare=False)
 
     @staticmethod
     def of(elements: Iterable[Element], settings: CanvasSettings | None = None) -> Document:
@@ -82,7 +86,9 @@ class Document:
         return replace(self, settings=settings)
 
     def content_bounds(self) -> Rect | None:
-        return union_all(element_bounds(e) for e in self.elements.values())
+        if not self._bounds:
+            self._bounds.append(union_all(element_bounds(e) for e in self.elements.values()))
+        return self._bounds[0]
 
     def bounds_of(self, ids: Iterable[str]) -> Rect | None:
         return union_all(element_bounds(self.elements[i]) for i in ids if i in self.elements)

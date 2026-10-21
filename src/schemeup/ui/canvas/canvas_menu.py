@@ -36,7 +36,8 @@ def sheet_thumbnail(preset_id: str, spacing_mm: float, background: str, dark: bo
     preset = next(p for p in SHEET_PRESETS if p.id == preset_id)
     sheet = preset.build(spacing_mm)
     pixmap = QPixmap(THUMB)
-    pixmap.fill(QColor(dark_variant(background) if dark else background))
+    fill = QColor(dark_variant(background) if dark else background)
+    pixmap.fill(fill)
     painter = QPainter(pixmap)
     camera = Camera().centered_on(Point(0, 0), Size(THUMB.width(), THUMB.height()), zoom=0.55)
     paint_sheet(
@@ -45,6 +46,7 @@ def sheet_thumbnail(preset_id: str, spacing_mm: float, background: str, dark: bo
         camera,
         Size(THUMB.width(), THUMB.height()),
         DARK_SHEET_STYLE if dark else LIGHT_SHEET_STYLE,
+        fill,
     )
     painter.end()
     return QIcon(pixmap)

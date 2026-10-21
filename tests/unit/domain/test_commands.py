@@ -163,3 +163,14 @@ def test_set_style_and_lock() -> None:
     assert commands.set_style(document, [a.id], stroke_color=a.style.stroke_color) == {}
     locked = commands.set_locked(document, [a.id], True)
     assert locked[a.id].locked  # type: ignore[union-attr]
+
+
+def test_content_bounds_follow_the_document_version() -> None:
+    document = Document.of([rect(0, 0)])
+    assert document.content_bounds() == Rect(0, 0, 100, 60)
+    assert document.content_bounds() is document.content_bounds()  # computed once
+
+    grown = document.with_elements({"far": replace(rect(500, 500), id="far")})
+    assert grown.content_bounds() == Rect(0, 0, 600, 560)
+    assert document.content_bounds() == Rect(0, 0, 100, 60)  # the old version is untouched
+    assert Document().content_bounds() is None
