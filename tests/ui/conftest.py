@@ -2,7 +2,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
-from PySide6.QtCore import QEvent, QPointF, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
@@ -129,3 +129,8 @@ def window(qtbot: QtBot, library: LibraryService, tmp_path: Any) -> Iterator[Mai
     qtbot.waitExposed(win)
     yield win
     win._quitting = True
+    # Free the window now. The application stylesheet is re-applied to every widget that
+    # still exists whenever a window is built, so leftovers make each test slower than the last.
+    win.close()
+    win.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
