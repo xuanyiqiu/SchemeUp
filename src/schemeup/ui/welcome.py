@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QGridLayout,
@@ -15,8 +17,10 @@ from PySide6.QtWidgets import (
 )
 
 from schemeup.application.library import LibraryService
+from schemeup.domain.streaks import streaks
 from schemeup.domain.templates import TEMPLATES
 from schemeup.ui.formatting import relative_time
+from schemeup.ui.heatmap import ActivityHeatmap, first_day
 from schemeup.ui.theme import Theme, icon
 
 CARD_LABELS = {
@@ -61,6 +65,7 @@ class WelcomePage(QWidget):
         center.addStretch(1)
         column = QVBoxLayout()
         column.setSpacing(14)
+        column.setContentsMargins(0, 0, 0, 0)
         self.title = QLabel(self.tr("Good to see you"))
         self.title.setObjectName("title")
         subtitle = QLabel(self.tr("Sketch, take notes, and find everything later."))
@@ -94,11 +99,26 @@ class WelcomePage(QWidget):
         column.addSpacing(10)
         column.addWidget(recent)
         self.recent = QListWidget()
-        self.recent.setFixedHeight(200)
+        self.recent.setFixedHeight(168)
         self.recent.itemClicked.connect(
             lambda item: self.note_chosen.emit(int(item.data(Qt.ItemDataRole.UserRole)))
         )
         column.addWidget(self.recent)
+
+        year = QLabel(self.tr("Your year in notes").upper())
+        year.setObjectName("section")
+        column.addSpacing(6)
+        column.addWidget(year)
+        self.heatmap = ActivityHeatmap(theme)
+        column.addWidget(self.heatmap)
+        summary = QHBoxLayout()
+        self.year_label = QLabel()
+        self.year_label.setObjectName("muted")
+        self.streak_label = QLabel()
+        self.streak_label.setObjectName("muted")
+        summary.addWidget(self.year_label, 1)
+        summary.addWidget(self.streak_label)
+        column.addLayout(summary)
 
         tips = QLabel(self.tr("Shortcuts").upper())
         tips.setObjectName("section")
@@ -138,6 +158,7 @@ class WelcomePage(QWidget):
         )
         for card, name in self._cards:
             card.setIcon(icon(name, theme.accent))
+        self.heatmap.set_theme(theme)
         self.refresh()
 
     def refresh(self) -> None:
@@ -154,3 +175,34 @@ class WelcomePage(QWidget):
             )
             item.setData(Qt.ItemDataRole.UserRole, note.id)
             self.recent.addItem(item)
+        self._refresh_year()
+
+    def _refresh_year(self) -> None:
+        today = date.today()
+        days = self._library.calendar(first_day(today), today)
+        counts = {day: entry.count for day, entry in days.items() if entry.count}
+        self.heatmap.set_data(counts, today)
+        total = sum(counts.values())
+        if total == 0:
+            self.year_label.setText(
+                self.tr("Nothing yet. Your first note lights up today's square.")
+            )
+            self.streak_label.clear()
+            return
+        word = (
+            self.tr("1 note touched in the last year")
+            if total == 1
+            else self.tr("%1 notes touched in the last year").replace("%1", str(total))
+        )
+        self.year_label.setText(word)
+        run = streaks(counts, today)
+        self.streak_label.setText(
+            self.tr("Current streak %1, longest %2")
+            .replace("%1", self._days(run.current))
+            .replace("%2", self._days(run.longest))
+        )
+
+    def _days(self, count: int) -> str:
+        if count == 1:
+            return self.tr("1 day")
+        return self.tr("%1 days").replace("%1", str(count))
