@@ -46,7 +46,7 @@ from PySide6.QtGui import (
     QTransform,
     QWheelEvent,
 )
-from PySide6.QtWidgets import QFileDialog, QMenu, QToolButton, QWidget
+from PySide6.QtWidgets import QFileDialog, QMenu, QToolButton, QToolTip, QWidget
 
 from schemeup.application.editor import Change, EditorSession
 from schemeup.application.ports import AssetStore
@@ -74,6 +74,7 @@ from schemeup.domain.serialization import element_from_dict, element_to_dict
 from schemeup.domain.sheets import Sheet, sheet_for
 from schemeup.domain.snapping import Guide, SheetSnap, SnapTargets
 from schemeup.domain.spatial import SpatialHash
+from schemeup.domain.structure_edit import Control
 from schemeup.domain.structures import StructureError, StructureKind, build, recentered
 from schemeup.domain.style import FontFamily, TextAlign
 from schemeup.domain.text import ARROW_LABEL_MAX_WIDTH, arrow_label_center, label_area, place_block
@@ -93,6 +94,7 @@ from schemeup.ui.canvas.overlays import (
     selection_frame,
     single_linear,
 )
+from schemeup.ui.canvas.structure_buttons import StructureButtons
 from schemeup.ui.canvas.text_editor import TextEditor
 from schemeup.ui.canvas.tools import (
     EraserTool,
@@ -267,6 +269,7 @@ class CanvasView(QWidget):
             ToolKind.ERASER: EraserTool(self),
         }
         self._tool: Tool = self._tools[ToolKind.SELECT]
+        self._structure_buttons = StructureButtons(self)
         self._add_shortcuts()
         session.subscribe(self._on_session_change)
         self._update_overlays()
@@ -335,6 +338,10 @@ class CanvasView(QWidget):
             self._session.select(())
         self.tool_changed.emit(kind)
         self.update()
+
+    @property
+    def pointer_down(self) -> bool:
+        return self._pointer_down
 
     @property
     def presenting(self) -> bool:
@@ -837,6 +844,7 @@ class CanvasView(QWidget):
                 self._theme.panel,
                 show_handles,
             )
+        self._structure_buttons.paint(painter, self._theme.panel, self._theme.selection)
         paint_guides(painter, self._guides, self._camera)
         if self._rubber is not None:
             paint_rubber_band(painter, self._rubber, self._camera, self._theme.selection)
@@ -863,6 +871,12 @@ class CanvasView(QWidget):
             if (e := document.get(i)) is not None and not touches_pages(e, pages)
         }
         return (off - self._preview_ids) | moved
+
+    def run_structure_control(self, control: Control) -> None:
+        """Press a + or - button on a data structure; a new cell opens for typing."""
+        focus = self._session.edit_structure(control.node_id, control.op)
+        if focus is not None:
+            self.edit_text(focus)
 
     def insert_structure(self, kind: StructureKind, text: str) -> bool:
         """Draw a data structure in the middle of the view.
@@ -1016,6 +1030,14 @@ class CanvasView(QWidget):
             event.accept()
             return
         button = event.button()
+        if button == Qt.MouseButton.LeftButton:
+            control = self._structure_buttons.button_at(_point(event.position()))
+            if control is not None:
+                if self.text_editor.element_id is not None:
+                    self.text_editor.commit()
+                self.run_structure_control(control)
+                event.accept()
+                return
         if button == Qt.MouseButton.MiddleButton or (
             button == Qt.MouseButton.LeftButton and self._space_held
         ):
@@ -1053,7 +1075,17 @@ class CanvasView(QWidget):
         if self._pointer_down:
             self._tool.move(pointer)
         else:
+            if self._structure_buttons.update_hover(pointer.world, pointer.screen):
+                self.update()
             self._tool.hover(pointer)
+            hovered = self._structure_buttons.hovered()
+            if hovered is not None:
+                self.setCursor(Qt.CursorShape.PointingHandCursor)
+                QToolTip.showText(
+                    event.globalPosition().toPoint(), self._structure_buttons.tip_for(hovered), self
+                )
+            else:
+                QToolTip.hideText()
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
@@ -1099,6 +1131,10 @@ class CanvasView(QWidget):
                 self._session.select(())
             return
         super().keyPressEvent(event)
+
+    def leaveEvent(self, event: QEvent) -> None:
+        self._structure_buttons.clear_hover()
+        super().leaveEvent(event)
 
     def keyReleaseEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():

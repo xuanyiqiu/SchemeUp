@@ -28,6 +28,7 @@ from schemeup.domain.elements import (
 from schemeup.domain.export_layout import pages_of
 from schemeup.domain.geometry import Point, Rect
 from schemeup.domain.history import Changeset, History, Selection
+from schemeup.domain.structure_edit import StructureOp, edit
 from schemeup.domain.style import DEFAULT_STYLE, Style
 from schemeup.domain.text import TextMeasurer, fit_label, fit_text
 
@@ -299,6 +300,20 @@ class EditorSession:
             self.commit(
                 commands.distribute(self._document, self._selection, horizontal), "Distribute"
             )
+
+    def edit_structure(self, node_id: str, op: StructureOp) -> str | None:
+        """Add or remove a part of a data structure, redrawing it in place as one change.
+
+        Returns the new value shape, so its text can be typed straight away, or None when
+        nothing was added (or the structure could not be edited)."""
+        result = edit(self._document, node_id, op)
+        if result is None:
+            return None
+        changes = commands.delete(self._document, result.remove)
+        changes.update({e.id: e for e in result.add})
+        changes = self.refit(changes)
+        self.commit(changes, "Edit structure", selection=[e.id for e in result.add])
+        return result.focus
 
     def add_page(self) -> Rect | None:
         """Append an empty page to a paged note and return it (None for an infinite canvas)."""
