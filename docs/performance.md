@@ -35,3 +35,28 @@ the rasterizing of rough fills and strokes dominates there. If it matters in
 practice, the next step is a cached pixmap of the static layer that is scaled
 during the gesture and redrawn when it settles, as the architecture document
 describes.
+
+## Panning on large screens
+
+Panning felt uneven on a high-resolution display, and the first benchmark above
+was too small to show why: the sheet lines cost time in proportion to the number
+of pixels on screen. `benchmarks/pan_bench.py` paints a pan at three sizes with a
+note of 50 hand-drawn elements, which is a busy page.
+
+```
+uv run python -m benchmarks.pan_bench 50
+```
+
+| Screen | Before | After |
+| --- | --- | --- |
+| 1920x1080 | 15 ms | 5 ms |
+| 2560x1440 | 24 ms | 6 ms |
+| 3840x2160 | 133 ms | 11 ms |
+
+A 60 Hz screen gives 16.7 ms a frame and a 144 Hz one 6.9 ms, so before the
+change only full HD was close, and a 4K screen ran at about 8 frames a second.
+Nothing in the pan code depends on the refresh rate: the camera moves on every
+mouse event, and the glide after letting go ticks once per display refresh.
+
+The last change moved the floating panels out of the pan path. They were placed
+again on every camera movement, and now only when the zoom label changes width.

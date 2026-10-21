@@ -149,7 +149,8 @@ class EditorPage(QWidget):
             history_layout.addWidget(button)
 
         session.subscribe(self._on_session_change)
-        self.canvas.camera_changed.connect(lambda _c: self.place_islands())
+        self._zoom_label_width = 0
+        self.canvas.camera_changed.connect(self._on_camera_changed)
         self.set_theme(theme)
         self._update_history()
 
@@ -205,6 +206,14 @@ class EditorPage(QWidget):
         )
         for widget in (self.toolbar, self.menu_island, self.properties, self.history_island):
             widget.raise_()
+
+    def _on_camera_changed(self, _camera: object) -> None:
+        # Panning moves the camera on every mouse event, and the panels only need
+        # placing again when the zoom label (which the undo island sits beside) changes width.
+        width = self.canvas.zoom_button.width()
+        if width != self._zoom_label_width:
+            self._zoom_label_width = width
+            self.place_islands()
 
     def _open_canvas_menu(self) -> None:
         anchor = self.menu_island.mapToGlobal(QPoint(Island.SHADOW, self.menu_island.height()))
