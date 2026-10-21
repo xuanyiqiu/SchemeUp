@@ -13,8 +13,8 @@ class Settings:
     hotkey: str = "Ctrl+Alt+N"
     close_to_tray: bool = True
     motion: str = "system"  # system | full | reduced
-    snap_objects: bool = True
-    snap_grid: bool = True
+    snap_objects: bool = False
+    snap_grid: bool = False
     last_note_id: int | None = None
     sidebar_visible: bool = True
     window_geometry: str = ""

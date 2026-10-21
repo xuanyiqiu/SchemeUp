@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
 from schemeup.application.editor import EditorSession
+from schemeup.application.settings import Settings
 from schemeup.domain.camera import MAX_ZOOM, Camera
 from schemeup.domain.document import Document
 from schemeup.domain.geometry import Point
@@ -195,3 +196,10 @@ def test_reduced_motion_does_not_glide(calm_view: CanvasView) -> None:
     )
     assert not calm_view.is_animating
     assert calm_view.camera.to_screen(Point(0, 0)) == Point(440, 300)
+
+
+def test_snapping_is_off_until_switched_on(view: CanvasView) -> None:
+    assert not view.snap_objects
+    assert not view.snap_grid
+    assert not Settings().snap_objects
+    assert not Settings().snap_grid

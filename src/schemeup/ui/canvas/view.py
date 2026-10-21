@@ -188,8 +188,8 @@ class CanvasView(QWidget):
         self._rubber: Rect | None = None
         self._faded: frozenset[str] = frozenset()
 
-        self.snap_objects = True
-        self.snap_grid = True
+        self.snap_objects = False
+        self.snap_grid = False
         self.tool_locked = False
 
         # Presenting: input turns into slide navigation and everything but the
