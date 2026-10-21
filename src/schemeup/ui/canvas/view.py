@@ -553,7 +553,14 @@ class CanvasView(QWidget):
             )
             top_left = self._camera.to_screen(Point(element.x, element.y))
             w = (block.width if width is None else width) * zoom + slack
-            return QRectF(top_left.x, top_left.y, w, block.height * zoom + 2)
+            raise_by = block.inset * zoom
+            # Split the caret slack so aligned text sits where it will be drawn.
+            shift = {TextAlign.LEFT: 0.0, TextAlign.CENTER: slack / 2, TextAlign.RIGHT: slack}[
+                style.text_align
+            ]
+            return QRectF(
+                top_left.x - shift, top_left.y - raise_by, w, block.height * zoom + 2 + raise_by
+            )
         if isinstance(element, SHAPES):
             area = label_area(element)
             block = fitted_block(text or " ", style, area.width)
@@ -561,12 +568,14 @@ class CanvasView(QWidget):
             center = box.center.rotated(element.center, element.angle)
             s = self._camera.to_screen(center)
             w, h = block.width * zoom + slack, block.height * zoom + 2
-            return QRectF(s.x - w / 2, s.y - h / 2, w, h)
+            raise_by = block.inset * zoom
+            return QRectF(s.x - w / 2, s.y - h / 2 - raise_by, w, h + raise_by)
         if isinstance(element, LINEAR):
             block = fitted_block(text or " ", style, ARROW_LABEL_MAX_WIDTH)
             s = self._camera.to_screen(arrow_label_center(element))
             w, h = block.width * zoom + slack, block.height * zoom + 2
-            return QRectF(s.x - w / 2, s.y - h / 2, w, h)
+            raise_by = block.inset * zoom
+            return QRectF(s.x - w / 2, s.y - h / 2 - raise_by, w, h + raise_by)
         return QRectF()
 
     def _text_finished(self, element_id: str, text: str) -> None:

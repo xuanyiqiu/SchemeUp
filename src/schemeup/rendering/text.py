@@ -36,9 +36,16 @@ class TextBlock:
     line_height: float
     family: FontFamily
     size: float
+    # How far a plain text editor, which puts the first baseline one full font ascent
+    # below its top, must be raised so its text lines up with the tight box above.
+    inset: float = 0.0
 
     def font(self) -> QFont:
         return canvas_font(self.family, self.size)
+
+
+ASCENDER_OVER_CAP = 1.1  # tall letters (l, d, b) rise this far over the capital height
+DESCENDER = 0.18  # room under the baseline for g, y and p, in font sizes
 
 
 def _wrap(paragraph: str, font: QFont, max_width: float) -> list[tuple[str, float]]:
@@ -66,6 +73,10 @@ def layout_text(
     font = canvas_font(family, size)
     metrics = QFontMetricsF(font)
     line_height = metrics.lineSpacing()
+    # The box hugs the glyphs: from the tallest letters down to just under the baseline,
+    # not the font's full ascent and descent, which leave a gap above and below.
+    ink_top = metrics.capHeight() * ASCENDER_OVER_CAP
+    ink_bottom = font.pixelSize() * DESCENDER
     raw: list[tuple[str, float]] = []
     for paragraph in text.split("\n"):
         if max_width is None or not paragraph:
@@ -82,14 +93,15 @@ def layout_text(
             x = width - line_width
         else:
             x = 0.0
-        lines.append(LaidOutLine(content, x, i * line_height + metrics.ascent()))
+        lines.append(LaidOutLine(content, x, i * line_height + ink_top))
     return TextBlock(
         tuple(lines),
         max(natural if max_width is None else width, 1.0),
-        len(raw) * line_height,
+        (len(raw) - 1) * line_height + ink_top + ink_bottom,
         line_height,
         family,
         size,
+        metrics.ascent() - ink_top,
     )
 
 
