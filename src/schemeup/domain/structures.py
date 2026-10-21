@@ -3,6 +3,10 @@
 `build` turns something like "3, 1, 4, 1, 5" or "1,2,3,null,4" into shapes, arrows
 bound to them and small captions, all in one group, so a diagram of a structure
 costs a few seconds of typing instead of a few minutes of dragging boxes.
+
+The drawing itself works from a model (values, rows, a tree, a graph), which is
+also what `structure_edit` reads back from the canvas and changes when a cell or a
+node is added or removed.
 """
 
 from __future__ import annotations
@@ -10,8 +14,9 @@ from __future__ import annotations
 import itertools
 import math
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from typing import Any, cast
 
 from schemeup.domain import commands
 from schemeup.domain.binding import CENTER, DEFAULT_GAP, bound_endpoint
@@ -78,6 +83,46 @@ class StructureError(ValueError):
     """The text could not be turned into this kind of structure."""
 
 
+# Models
+
+
+@dataclass(slots=True, eq=False)
+class TreeNode:
+    value: str
+    left: TreeNode | None = None
+    right: TreeNode | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Edge:
+    a: int  # index into the graph's labels
+    b: int
+    directed: bool = False
+    weight: str = ""
+
+
+@dataclass(slots=True)
+class GraphModel:
+    labels: list[str]
+    edges: list[Edge] = field(default_factory=list)
+
+
+# What a structure of each kind is made of: a list of values (array, linked lists, stack,
+# queue), a list of rows (matrix), the root of a tree, or a graph.
+type Model = list[str] | list[list[str]] | TreeNode | GraphModel
+
+
+@dataclass(slots=True)
+class Built:
+    """A drawn structure: its elements, and the shape of each value in its model.
+
+    `nodes` is keyed by where the value sits in the model: an index (lists, graphs), a
+    (row, column) pair (matrices) or the `TreeNode` itself."""
+
+    elements: list[Element]
+    nodes: dict[Any, Element]
+
+
 # Parsing
 
 
@@ -97,18 +142,11 @@ def _is_empty(word: str) -> bool:
     return word.lower() in EMPTY_WORDS
 
 
-@dataclass(slots=True)
-class _TreeNode:
-    value: str
-    left: _TreeNode | None = None
-    right: _TreeNode | None = None
-
-
-def _tree_from_level_order(words: list[str]) -> _TreeNode:
+def _tree_from_level_order(words: list[str]) -> TreeNode:
     """The usual level-order list: children of each node in turn, `null` for a missing one."""
     if _is_empty(words[0]):
         raise StructureError("a tree needs a root value first")
-    root = _TreeNode(words[0])
+    root = TreeNode(words[0])
     pending = iter(words[1:])
     queue = [root]
     for node in queue:
@@ -117,13 +155,58 @@ def _tree_from_level_order(words: list[str]) -> _TreeNode:
             if word is None:
                 return root
             if not _is_empty(word):
-                child = _TreeNode(word)
+                child = TreeNode(word)
                 setattr(node, side, child)
                 queue.append(child)
     return root
 
 
 _EDGE = re.compile(r"^(?P<a>.+?)\s*(?P<arrow>->|--|-|=>|→)\s*(?P<b>.+?)(?::(?P<w>[^:]+))?$")
+
+
+def _parse_graph(text: str) -> GraphModel:
+    """Node names in order of appearance, and the edges written between them."""
+    labels: list[str] = []
+    edges: list[Edge] = []
+
+    def index_of(name: str) -> int:
+        if name not in labels:
+            labels.append(name)
+        return labels.index(name)
+
+    for part in re.split(r"[,;\n]+", text):
+        part = part.strip()
+        if not part:
+            continue
+        match = _EDGE.match(part)
+        if match is None:
+            index_of(part)  # a lone name is a node without edges
+            continue
+        a, b = index_of(match["a"].strip()), index_of(match["b"].strip())
+        directed = match["arrow"] in ("->", "=>", "→")
+        edges.append(Edge(a, b, directed, (match["w"] or "").strip()))
+    return GraphModel(labels, edges)
+
+
+def parse(kind: StructureKind, text: str) -> Model:
+    """The model a line of text describes; `StructureError` says what is wrong with it."""
+    match kind:
+        case StructureKind.MATRIX:
+            rows = [_words(r) for r in re.split(r"[;\n/]", text) if r.strip()]
+            _check_size(sum(len(r) for r in rows))
+            return rows
+        case StructureKind.GRAPH:
+            graph = _parse_graph(text)
+            _check_size(len(graph.labels))
+            return graph
+        case StructureKind.TREE:
+            words = _words(text)
+            _check_size(len(words))
+            return _tree_from_level_order(words)
+        case _:
+            words = _words(text)
+            _check_size(len(words))
+            return words
 
 
 # Styles
@@ -185,6 +268,13 @@ def _shape(kind: ShapeKind, rect: Rect, label: str, style: Style) -> Rectangle |
     return replace(shape, label=label)
 
 
+def _node(
+    structure: StructureKind, kind: ShapeKind, rect: Rect, label: str, style: Style
+) -> Rectangle | Ellipse:
+    """A shape that holds one value of a structure; the tag lets it be read back later."""
+    return replace(_shape(kind, rect, label, style), structure=structure.value)
+
+
 def _caption(text: str, rect: Rect, base: Style) -> Text:
     """A small centered label that sits in `rect` (its width, its top)."""
     element = commands.make_text(Point(rect.x, rect.y), text, _caption_style(base))
@@ -225,108 +315,121 @@ RIGHT_SIDE = Point(1.0, 0.5)
 LEFT_SIDE = Point(0.0, 0.5)
 
 
-# Layouts. Each returns elements around the origin; `build` groups and centers them.
+# Layouts. Each returns elements around the origin; `build_model` groups them.
 
 
-def _array(words: list[str], base: Style) -> list[Element]:
+def _array(words: list[str], base: Style) -> Built:
     nodes = _node_style(base)
     w = _cell_width(words, base.font_size)
-    elements: list[Element] = []
+    built = Built([], {})
     for i, word in enumerate(words):
-        elements.append(_shape(ShapeKind.RECTANGLE, Rect(i * w, 0, w, CELL_HEIGHT), word, nodes))
-        elements.append(_caption(str(i), Rect(i * w, CELL_HEIGHT + 4, w, 20), base))
-    return elements
+        cell = _node(
+            StructureKind.ARRAY, ShapeKind.RECTANGLE, Rect(i * w, 0, w, CELL_HEIGHT), word, nodes
+        )
+        built.nodes[i] = cell
+        built.elements += [cell, _caption(str(i), Rect(i * w, CELL_HEIGHT + 4, w, 20), base)]
+    return built
 
 
-def _matrix(rows: list[list[str]], base: Style) -> list[Element]:
+def _matrix(rows: list[list[str]], base: Style) -> Built:
     nodes = _node_style(base)
     columns = max(len(r) for r in rows)
     w = _cell_width([c for r in rows for c in r], base.font_size)
     cap = _caption_style(base).font_size * 1.4
-    elements: list[Element] = []
+    built = Built([], {})
     for i, row in enumerate(rows):
         for j in range(columns):
             word = row[j] if j < len(row) else ""
             rect = Rect(j * w, i * CELL_HEIGHT, w, CELL_HEIGHT)
-            elements.append(_shape(ShapeKind.RECTANGLE, rect, word, nodes))
-        elements.append(
+            cell = _node(StructureKind.MATRIX, ShapeKind.RECTANGLE, rect, word, nodes)
+            built.nodes[(i, j)] = cell
+            built.elements.append(cell)
+        built.elements.append(
             _caption(str(i), Rect(-34, i * CELL_HEIGHT + (CELL_HEIGHT - cap) / 2, 28, cap), base)
         )
     for j in range(columns):
-        elements.append(_caption(str(j), Rect(j * w, -cap - 4, w, cap), base))
-    return elements
+        built.elements.append(_caption(str(j), Rect(j * w, -cap - 4, w, cap), base))
+    return built
 
 
-def _linked_list(words: list[str], base: Style, doubly: bool) -> list[Element]:
+def _linked_list(words: list[str], base: Style, doubly: bool) -> Built:
+    kind = StructureKind.DOUBLY_LINKED_LIST if doubly else StructureKind.LINKED_LIST
     nodes = _node_style(base)
     heads = (Arrowhead.ARROW if doubly else Arrowhead.NONE, Arrowhead.ARROW)
     links = _link_style(base, nodes, heads)
     w = _cell_width(words, base.font_size)
     step = w + NODE_GAP
     first = 0.0 if not doubly else NODE_GAP + MIN_CELL_WIDTH
-    shapes = [
-        _shape(ShapeKind.RECTANGLE, Rect(first + i * step, 0, w, CELL_HEIGHT), word, nodes)
-        for i, word in enumerate(words)
-    ]
+    built = Built([], {})
+    for i, word in enumerate(words):
+        rect = Rect(first + i * step, 0, w, CELL_HEIGHT)
+        built.nodes[i] = _node(kind, ShapeKind.RECTANGLE, rect, word, nodes)
+    shapes = list(built.nodes.values())
     end = _empty_marker(
         Rect(first + len(words) * step, CELL_HEIGHT * 0.1, MIN_CELL_WIDTH, CELL_HEIGHT * 0.8),
         base,
         nodes,
     )
     chain: list[Element] = [*shapes, end]
-    elements: list[Element] = list(chain)
+    built.elements += chain
     if doubly:
         start = _empty_marker(
             Rect(0, CELL_HEIGHT * 0.1, MIN_CELL_WIDTH, CELL_HEIGHT * 0.8), base, nodes
         )
         chain.insert(0, start)
-        elements.append(start)
+        built.elements.append(start)
     for a, b in itertools.pairwise(chain):
-        elements.append(_link(a, b, links, source_anchor=RIGHT_SIDE, target_anchor=LEFT_SIDE))
-    elements.append(_caption("head", Rect(shapes[0].x, -26, w, 20), base))
-    return elements
+        built.elements.append(_link(a, b, links, source_anchor=RIGHT_SIDE, target_anchor=LEFT_SIDE))
+    built.elements.append(_caption("head", Rect(shapes[0].x, -26, w, 20), base))
+    return built
 
 
-def _stack(words: list[str], base: Style) -> list[Element]:
+def _stack(words: list[str], base: Style) -> Built:
     nodes = _node_style(base)
     w = _cell_width(words, base.font_size)
     count = len(words)
-    elements: list[Element] = []
+    built = Built([], {})
     for i, word in enumerate(words):  # the first value is at the bottom
         y = (count - 1 - i) * CELL_HEIGHT
-        elements.append(_shape(ShapeKind.RECTANGLE, Rect(0, y, w, CELL_HEIGHT), word, nodes))
+        cell = _node(
+            StructureKind.STACK, ShapeKind.RECTANGLE, Rect(0, y, w, CELL_HEIGHT), word, nodes
+        )
+        built.nodes[i] = cell
+        built.elements.append(cell)
     middle = CELL_HEIGHT / 2
     pointer = commands.make_linear(
         True,
         [Point(w + 46, middle), Point(w + 8, middle)],
         _link_style(base, nodes, (Arrowhead.NONE, Arrowhead.ARROW)),
     )
-    elements += [pointer, _caption("top", Rect(w + 48, middle - 10, 40, 20), base)]
-    return elements
+    built.elements += [pointer, _caption("top", Rect(w + 48, middle - 10, 40, 20), base)]
+    return built
 
 
-def _queue(words: list[str], base: Style) -> list[Element]:
+def _queue(words: list[str], base: Style) -> Built:
     nodes = _node_style(base)
     w = _cell_width(words, base.font_size)
-    elements: list[Element] = [
-        _shape(ShapeKind.RECTANGLE, Rect(i * w, 0, w, CELL_HEIGHT), word, nodes)
-        for i, word in enumerate(words)
-    ]
+    built = Built([], {})
+    for i, word in enumerate(words):
+        built.nodes[i] = _node(
+            StructureKind.QUEUE, ShapeKind.RECTANGLE, Rect(i * w, 0, w, CELL_HEIGHT), word, nodes
+        )
+    built.elements += list(built.nodes.values())
     last = (len(words) - 1) * w
     below = CELL_HEIGHT + 4
     if len(words) == 1:
-        elements.append(_caption("front / back", Rect(-10, below, w + 20, 20), base))
+        built.elements.append(_caption("front / back", Rect(-10, below, w + 20, 20), base))
     else:
-        elements.append(_caption("front", Rect(0, below, w, 20), base))
-        elements.append(_caption("back", Rect(last, below, w, 20), base))
-    return elements
+        built.elements.append(_caption("front", Rect(0, below, w, 20), base))
+        built.elements.append(_caption("back", Rect(last, below, w, 20), base))
+    return built
 
 
-def _tree(root: _TreeNode, base: Style) -> list[Element]:
+def _tree(root: TreeNode, base: Style) -> Built:
     nodes = _node_style(base)
     labels: list[str] = []
 
-    def collect(node: _TreeNode | None) -> None:
+    def collect(node: TreeNode | None) -> None:
         if node is not None:
             labels.append(node.value)
             collect(node.left)
@@ -335,9 +438,9 @@ def _tree(root: _TreeNode, base: Style) -> list[Element]:
     collect(root)
     size = _circle_size(labels, base.font_size)
     step_x, step_y = size + 14, size + LEVEL_GAP
-    placed: list[tuple[_TreeNode, int, int]] = []  # node, in-order column, depth
+    placed: list[tuple[TreeNode, int, int]] = []  # node, in-order column, depth
 
-    def walk(node: _TreeNode | None, depth: int) -> None:
+    def walk(node: TreeNode | None, depth: int) -> None:
         if node is None:
             return
         walk(node.left, depth + 1)
@@ -345,68 +448,83 @@ def _tree(root: _TreeNode, base: Style) -> list[Element]:
         walk(node.right, depth + 1)
 
     walk(root, 0)
-    shape_of: dict[int, Element] = {}
-    elements: list[Element] = []
+    built = Built([], {})
     for node, column, depth in placed:
-        circle = _shape(
-            ShapeKind.ELLIPSE, Rect(column * step_x, depth * step_y, size, size), node.value, nodes
-        )
-        shape_of[id(node)] = circle
-        elements.append(circle)
+        rect = Rect(column * step_x, depth * step_y, size, size)
+        circle = _node(StructureKind.TREE, ShapeKind.ELLIPSE, rect, node.value, nodes)
+        built.nodes[node] = circle
+        built.elements.append(circle)
     links = _link_style(base, nodes, (Arrowhead.NONE, Arrowhead.NONE))
     for node, _column, _depth in placed:
         for child in (node.left, node.right):
             if child is not None:
-                elements.append(_link(shape_of[id(node)], shape_of[id(child)], links))
-    return elements
+                built.elements.append(_link(built.nodes[node], built.nodes[child], links))
+    return built
 
 
-def _parse_edges(text: str) -> tuple[list[str], list[tuple[str, str, bool, str]]]:
-    """Node names in order of appearance, and the edges as (from, to, directed, weight)."""
-    order: list[str] = []
-    edges: list[tuple[str, str, bool, str]] = []
-
-    def see(name: str) -> None:
-        if name not in order:
-            order.append(name)
-
-    for part in re.split(r"[,;\n]+", text):
-        part = part.strip()
-        if not part:
-            continue
-        match = _EDGE.match(part)
-        if match is None:
-            see(part)  # a lone name is a node without edges
-            continue
-        a, b = match["a"].strip(), match["b"].strip()
-        see(a)
-        see(b)
-        directed = match["arrow"] in ("->", "=>", "\u2192")
-        edges.append((a, b, directed, (match["w"] or "").strip()))
-    return order, edges
-
-
-def _graph(order: list[str], edges: list[tuple[str, str, bool, str]], base: Style) -> list[Element]:
+def _graph(graph: GraphModel, base: Style) -> Built:
     nodes = _node_style(base)
-    size = _circle_size(order, base.font_size)
-    count = len(order)
+    size = _circle_size(graph.labels, base.font_size)
+    count = len(graph.labels)
     radius = 0.0 if count == 1 else max(90.0, count * (size + 16) / (2 * math.pi))
-    shapes: dict[str, Element] = {}
-    for i, name in enumerate(order):
+    built = Built([], {})
+    for i, name in enumerate(graph.labels):
         angle = -math.pi / 2 + 2 * math.pi * i / count
-        x = radius * math.cos(angle) - size / 2
-        y = radius * math.sin(angle) - size / 2
-        shapes[name] = _shape(ShapeKind.ELLIPSE, Rect(x, y, size, size), name, nodes)
-    elements: list[Element] = list(shapes.values())
-    for a, b, directed, weight in edges:
-        if a == b:
+        rect = Rect(
+            radius * math.cos(angle) - size / 2, radius * math.sin(angle) - size / 2, size, size
+        )
+        built.nodes[i] = _node(StructureKind.GRAPH, ShapeKind.ELLIPSE, rect, name, nodes)
+    built.elements += list(built.nodes.values())
+    for edge in graph.edges:
+        if edge.a == edge.b:
             continue  # a loop back to the same node has no sensible straight line
-        heads = (Arrowhead.NONE, Arrowhead.ARROW if directed else Arrowhead.NONE)
-        elements.append(_link(shapes[a], shapes[b], _link_style(base, nodes, heads), label=weight))
-    return elements
+        heads = (Arrowhead.NONE, Arrowhead.ARROW if edge.directed else Arrowhead.NONE)
+        link_style = _link_style(base, nodes, heads)
+        built.elements.append(
+            _link(built.nodes[edge.a], built.nodes[edge.b], link_style, label=edge.weight)
+        )
+    return built
 
 
 # Entry points
+
+
+def build_model(
+    kind: StructureKind,
+    model: Model,
+    base: Style,
+    *,
+    group_ids: tuple[str, ...] | None = None,
+    frame_id: str | None = None,
+) -> Built:
+    """Draw `model` around the origin, all of it in one group.
+
+    `group_ids` and `frame_id` let a redrawn structure keep the groups and the frame
+    the old one belonged to."""
+    match kind:
+        case StructureKind.MATRIX:
+            built = _matrix(cast(list[list[str]], model), base)
+        case StructureKind.GRAPH:
+            assert isinstance(model, GraphModel)
+            built = _graph(model, base)
+        case StructureKind.TREE:
+            assert isinstance(model, TreeNode)
+            built = _tree(model, base)
+        case StructureKind.LINKED_LIST | StructureKind.DOUBLY_LINKED_LIST:
+            doubly = kind is StructureKind.DOUBLY_LINKED_LIST
+            built = _linked_list(cast(list[str], model), base, doubly)
+        case StructureKind.STACK:
+            built = _stack(cast(list[str], model), base)
+        case StructureKind.QUEUE:
+            built = _queue(cast(list[str], model), base)
+        case StructureKind.ARRAY:
+            built = _array(cast(list[str], model), base)
+    groups = (new_id(),) if group_ids is None else group_ids
+    grouped = {e.id: replace(e, group_ids=groups, frame_id=frame_id) for e in built.elements}
+    return Built(
+        [grouped[e.id] for e in built.elements],
+        {key: grouped[node.id] for key, node in built.nodes.items()},
+    )
 
 
 def build(kind: StructureKind, text: str, base: Style) -> list[Element]:
@@ -414,37 +532,18 @@ def build(kind: StructureKind, text: str, base: Style) -> list[Element]:
 
     Raises `StructureError` with a message fit to show the user when the text does
     not describe this kind of structure."""
-    match kind:
-        case StructureKind.MATRIX:
-            rows = [_words(r) for r in re.split(r"[;\n/]", text) if r.strip()]
-            _check_size(sum(len(r) for r in rows))
-            elements = _matrix(rows, base)
-        case StructureKind.GRAPH:
-            order, edges = _parse_edges(text)
-            _check_size(len(order))
-            elements = _graph(order, edges, base)
-        case StructureKind.TREE:
-            words = _words(text)
-            _check_size(len(words))
-            elements = _tree(_tree_from_level_order(words), base)
-        case _:
-            words = _words(text)
-            _check_size(len(words))
-            elements = {
-                StructureKind.ARRAY: lambda: _array(words, base),
-                StructureKind.LINKED_LIST: lambda: _linked_list(words, base, doubly=False),
-                StructureKind.DOUBLY_LINKED_LIST: lambda: _linked_list(words, base, doubly=True),
-                StructureKind.STACK: lambda: _stack(words, base),
-                StructureKind.QUEUE: lambda: _queue(words, base),
-            }[kind]()
-    group = new_id()
-    return [replace(e, group_ids=(group,)) for e in elements]
+    return build_model(kind, parse(kind, text), base).elements
+
+
+def union_bounds(elements: list[Element]) -> Rect:
+    box = element_bounds(elements[0])
+    for element in elements[1:]:
+        box = box.union(element_bounds(element))
+    return box
 
 
 def recentered(elements: list[Element], center: Point) -> list[Element]:
     """`elements` moved so the middle of the whole structure sits at `center`."""
-    box = element_bounds(elements[0])
-    for element in elements[1:]:
-        box = box.union(element_bounds(element))
+    box = union_bounds(elements)
     dx, dy = center.x - box.center.x, center.y - box.center.y
     return [translated(e, dx, dy) for e in elements]

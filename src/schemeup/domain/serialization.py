@@ -139,6 +139,8 @@ def element_to_dict(element: Element) -> dict[str, Any]:
         "frame_id": element.frame_id,
         "style": style_to_dict(element.style),
     }
+    if element.structure:
+        data["structure"] = element.structure
     match element:
         case Rectangle() | Diamond() | Ellipse():
             data["label"] = element.label
@@ -181,6 +183,7 @@ def element_from_dict(data: dict[str, Any]) -> Element:
         "group_ids": tuple(str(g) for g in data.get("group_ids", ())),
         "frame_id": data.get("frame_id"),
         "style": style_from_dict(data.get("style", {})),
+        "structure": str(data.get("structure", "")),
     }
     if cls in (Rectangle, Diamond, Ellipse):
         return cls(**common, label=str(data.get("label", "")))

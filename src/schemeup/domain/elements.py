@@ -31,6 +31,8 @@ class ElementBase:
     locked: bool = False
     group_ids: tuple[str, ...] = ()  # innermost group first
     frame_id: str | None = None
+    # The kind of data structure this element holds a value of (a cell, a node), else empty.
+    structure: str = ""
 
     @property
     def local_rect(self) -> Rect:
