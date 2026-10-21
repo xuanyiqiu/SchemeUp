@@ -50,7 +50,15 @@ class TextEditor(QTextEdit):
     ) -> None:
         self._element_id = element_id
         self._layout = layout
+        # The app-wide stylesheet sets a font size on every QWidget, and style sheets win
+        # over setFont(). Putting the size in this widget's own sheet, which is more
+        # specific, keeps what you type the same size as what the canvas will draw.
+        self.setStyleSheet(
+            "#canvasTextEditor { background: transparent; border: none; padding: 0;"
+            f" font-family: '{font.family()}'; font-size: {font.pixelSize()}px; }}"
+        )
         self.setFont(font)
+        self.document().setDefaultFont(font)
         palette = self.palette()
         palette.setColor(QPalette.ColorRole.Text, color)
         self.setPalette(palette)
