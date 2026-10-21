@@ -631,6 +631,7 @@ class MainWindow(QMainWindow):
                     tr("Copy as PNG"), self.copy_png, "Shift+Alt+C", "copy", "clipboard image"
                 ),
                 PaletteCommand(tr("Rename note"), self._focus_title, "F2", "file-text"),
+                *self._page_commands(),
                 PaletteCommand(tr("Duplicate note"), self._duplicate_current, "", "copy"),
                 PaletteCommand(
                     tr("Move note to trash"), lambda: self._library.trash_note(note_id), "", "trash"
@@ -660,6 +661,19 @@ class MainWindow(QMainWindow):
                 )
         commands.append(PaletteCommand(tr("Quit"), self.quit, "Ctrl+Q", "x", "exit close"))
         return commands
+
+    def _page_commands(self) -> list[PaletteCommand]:
+        if self._session.document.settings.page_size is None:
+            return []
+        return [
+            PaletteCommand(
+                self.tr("Add a page"),
+                self.editor.canvas.add_page,
+                "Ctrl+Enter",
+                "file-text",
+                "sheet new break",
+            )
+        ]
 
     def _new_from(self, template_id: str) -> Callable[[], None]:
         return lambda: self.new_note(None, template_id)

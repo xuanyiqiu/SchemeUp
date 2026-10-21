@@ -22,7 +22,13 @@ from schemeup.application.ports import AssetStore
 from schemeup.domain.document import Document
 from schemeup.domain.elements import Image, Text
 from schemeup.domain.errors import ExportError
-from schemeup.domain.export_layout import MARGIN_MM, PageLayout, export_regions
+from schemeup.domain.export_layout import (
+    MARGIN_MM,
+    PageLayout,
+    export_regions,
+    off_page_ids,
+    pages_of,
+)
 from schemeup.domain.geometry import Rect
 from schemeup.domain.serialization import document_to_dict
 from schemeup.domain.sheets import MM
@@ -59,11 +65,17 @@ class FileExporter:
     def __init__(self, assets: AssetStore | None) -> None:
         self._renderer = SceneRenderer(AssetImages(assets))
         self._assets = assets
+        self._whole_pages = False
 
     def export(
         self, document: Document, request: ExportRequest, selection: frozenset[str], path: Path
     ) -> None:
         only = selection if request.scope == ExportScope.SELECTION and selection else None
+        # A paged note is its pages: what lies beside or between them is not exported.
+        self._whole_pages = only is None and document.settings.page_size is not None
+        if self._whole_pages:
+            off = off_page_ids(document)
+            only = frozenset(document.elements) - off if off else None
         try:
             match request.format:
                 case ExportFormat.PNG:
@@ -80,6 +92,9 @@ class FileExporter:
             raise ExportError(f"couldn't write {path.name}: {error}") from error
 
     def _region(self, document: Document, only: frozenset[str] | None) -> Rect:
+        if self._whole_pages:
+            pages = pages_of(document)
+            return pages[0].union(pages[-1])
         region = export_region(document, only or frozenset())
         if region is None:
             raise ExportError("there is nothing to export: the note is empty")
@@ -239,7 +254,7 @@ class FileExporter:
                 if request.layout == PageLayout.FRAMES and i < len(frames):
                     caption = word.add_paragraph(frames[i].name)
                     caption.runs[0].font.size = Pt(9)
-            text = document.plain_text()
+            text = document.plain_text(only=only)
             if request.text_appendix and text.strip():
                 word.add_heading("Text in this note", level=2)
                 for line in text.split("\n"):

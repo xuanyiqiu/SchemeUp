@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Container, Iterable, Mapping
 from dataclasses import dataclass, field, replace
+from typing import Any
 
 from schemeup.domain.elements import (
     LABELED,
@@ -25,6 +26,7 @@ class CanvasSettings:
     line_spacing_mm: float = 8.0  # used by the "lines" sheet
     page_size: str | None = None  # None for an infinite canvas, else a key of PAGE_SIZES_MM
     page_landscape: bool = False
+    page_count: int = 1  # pages a paged note has at least; content can add more
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,10 +34,10 @@ class Document:
     elements: Mapping[str, Element] = field(default_factory=dict)
     order: tuple[str, ...] = ()
     settings: CanvasSettings = CanvasSettings()
-    # Bounds of everything, filled on first use. Documents never change after
-    # creation, so the union over every element is computed once per version
-    # instead of once per repaint.
-    _bounds: list[Rect | None] = field(default_factory=list, init=False, repr=False, compare=False)
+    # Results that depend on every element, filled on first use. Documents never
+    # change after creation, so each is computed once per version instead of once
+    # per repaint.
+    _cache: dict[str, Any] = field(default_factory=dict, init=False, repr=False, compare=False)
 
     @staticmethod
     def of(elements: Iterable[Element], settings: CanvasSettings | None = None) -> Document:
@@ -85,10 +87,17 @@ class Document:
     def with_settings(self, settings: CanvasSettings) -> Document:
         return replace(self, settings=settings)
 
+    def cached[T](self, key: str, compute: Callable[[], T]) -> T:
+        """`compute()` the first time `key` is asked for on this document, then remember it."""
+        if key not in self._cache:
+            self._cache[key] = compute()
+        result: T = self._cache[key]
+        return result
+
     def content_bounds(self) -> Rect | None:
-        if not self._bounds:
-            self._bounds.append(union_all(element_bounds(e) for e in self.elements.values()))
-        return self._bounds[0]
+        return self.cached(
+            "bounds", lambda: union_all(element_bounds(e) for e in self.elements.values())
+        )
 
     def bounds_of(self, ids: Iterable[str]) -> Rect | None:
         return union_all(element_bounds(self.elements[i]) for i in ids if i in self.elements)
@@ -113,10 +122,15 @@ class Document:
     def group_members(self, group_id: str) -> list[str]:
         return [e.id for e in self.ordered() if group_id in e.group_ids]
 
-    def plain_text(self) -> str:
-        """All text and labels in reading order (top to bottom, then left to right)."""
+    def plain_text(self, only: Container[str] | None = None) -> str:
+        """Text and labels in reading order (top to bottom, then left to right).
+
+        `only` limits it to those element ids, for notes where part of the canvas
+        does not count."""
         pieces: list[tuple[float, float, str]] = []
         for e in self.elements.values():
+            if only is not None and e.id not in only:
+                continue
             if isinstance(e, Text) and e.text.strip():
                 pieces.append((e.y, e.x, e.text.strip()))
             elif isinstance(e, LABELED) and e.label.strip():

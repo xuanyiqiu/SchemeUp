@@ -221,6 +221,7 @@ def settings_to_dict(settings: CanvasSettings) -> dict[str, Any]:
         "line_spacing_mm": settings.line_spacing_mm,
         "page_size": settings.page_size,
         "page_landscape": settings.page_landscape,
+        "page_count": settings.page_count,
     }
 
 
@@ -232,6 +233,7 @@ def settings_from_dict(data: dict[str, Any]) -> CanvasSettings:
         line_spacing_mm=float(data.get("line_spacing_mm", defaults.line_spacing_mm)),
         page_size=data.get("page_size"),
         page_landscape=bool(data.get("page_landscape", False)),
+        page_count=max(1, int(data.get("page_count", 1))),
     )
 
 

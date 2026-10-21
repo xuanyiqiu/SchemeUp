@@ -25,7 +25,8 @@ from schemeup.domain.elements import (
     outer_group,
     touched,
 )
-from schemeup.domain.geometry import Point
+from schemeup.domain.export_layout import pages_of
+from schemeup.domain.geometry import Point, Rect
 from schemeup.domain.history import Changeset, History, Selection
 from schemeup.domain.style import DEFAULT_STYLE, Style
 from schemeup.domain.text import TextMeasurer, fit_label, fit_text
@@ -298,6 +299,15 @@ class EditorSession:
             self.commit(
                 commands.distribute(self._document, self._selection, horizontal), "Distribute"
             )
+
+    def add_page(self) -> Rect | None:
+        """Append an empty page to a paged note and return it (None for an infinite canvas)."""
+        pages = pages_of(self._document)
+        if not pages:
+            return None
+        settings = replace(self._document.settings, page_count=len(pages) + 1)
+        self.commit({}, "Add page", settings=settings)
+        return pages_of(self._document)[-1]
 
     def set_canvas_settings(self, settings: CanvasSettings) -> None:
         if settings != self._document.settings:

@@ -66,7 +66,7 @@ from schemeup.domain.elements import (
     element_bounds,
     world_points,
 )
-from schemeup.domain.export_layout import page_rects
+from schemeup.domain.export_layout import off_page_ids, pages_of, touches_pages
 from schemeup.domain.geometry import Point, Rect, Size
 from schemeup.domain.hit import is_inside, topmost_at
 from schemeup.domain.kinetics import Inertia, Spring, VelocityTracker
@@ -689,7 +689,12 @@ class CanvasView(QWidget):
     # Navigation
 
     def content_bounds(self) -> Rect | None:
-        return self._session.document.content_bounds()
+        """What the view frames: the pages of a paged note, else all the content."""
+        document = self._session.document
+        pages = pages_of(document)
+        if pages:
+            return pages[0].union(pages[-1])
+        return document.content_bounds()
 
     def recenter(self) -> None:
         """Spring back to the content (or the origin of an empty canvas)."""
@@ -774,10 +779,7 @@ class CanvasView(QWidget):
 
         viewport = self._viewport()
         sheet_style = DARK_SHEET_STYLE if dark else LIGHT_SHEET_STYLE
-        content = document.content_bounds() if settings.page_size else None
-        pages = page_rects(
-            settings.page_size, settings.page_landscape, content.bottom if content else 0.0
-        )
+        pages = pages_of(self._session.document, self._editing_bottom())
         if pages:
             painter.fillRect(self.rect(), QColor("#2b2b31" if dark else "#e9e9ee"))
             for page in pages:
@@ -809,7 +811,7 @@ class CanvasView(QWidget):
             elements,
             dark=dark,
             background=settings.background,
-            faded=self._faded,
+            faded=self._faded | self._off_page(document, pages),
             editing_text=editing,
             frame_chrome=not self._presenting,
         )
@@ -840,6 +842,32 @@ class CanvasView(QWidget):
         if not document.order and editing is None:
             self._paint_empty_hint(painter)
         painter.end()
+
+    def _editing_bottom(self) -> float | None:
+        """World y of the bottom of the text being typed, which may run past the last page."""
+        if self.text_editor.element_id is None:
+            return None
+        return self._camera.to_world(Point(0, self.text_editor.geometry().bottom())).y
+
+    def _off_page(self, document: Document, pages: list[Rect]) -> frozenset[str]:
+        """Elements to draw faded because they are not on any page of a paged note."""
+        if not pages:
+            return frozenset()
+        off = off_page_ids(self._session.document)
+        if not self._preview_ids:
+            return off
+        moved = {
+            i
+            for i in self._preview_ids
+            if (e := document.get(i)) is not None and not touches_pages(e, pages)
+        }
+        return (off - self._preview_ids) | moved
+
+    def add_page(self) -> None:
+        """Add an empty page after the last one and bring it into view (paged notes only)."""
+        page = self._session.add_page()
+        if page is not None:
+            self.fit_to(page, max_zoom=1.0, padding=40)
 
     def _paint_curtain(self, painter: QPainter) -> None:
         """Dim everything outside the slide, so its neighbours show only as a hint."""
@@ -1435,6 +1463,7 @@ class CanvasView(QWidget):
             (("Ctrl+-",), lambda: self.zoom_by(1 / ZOOM_PER_NOTCH)),
             (("Ctrl+0",), self.reset_zoom),
             (("Return", "Enter"), self._edit_selected_text),
+            (("Ctrl+Return", "Ctrl+Enter"), self.add_page),
             (("Shift+Alt+C",), self.copy_png_requested.emit),
             (("Left",), lambda: s.move_selection(-1, 0)),
             (("Right",), lambda: s.move_selection(1, 0)),

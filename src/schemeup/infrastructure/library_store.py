@@ -17,6 +17,7 @@ from datetime import datetime
 
 from schemeup.domain.document import Document
 from schemeup.domain.errors import ConflictError, NotFoundError, StorageError
+from schemeup.domain.export_layout import searchable_text
 from schemeup.domain.library import (
     Activity,
     Board,
@@ -290,7 +291,7 @@ class SqliteLibrary:
             note_id = int(cursor.lastrowid or 0)
             self._db.execute(
                 "INSERT INTO note_documents (note_id, schema_version, body, plain_text) VALUES (?, ?, ?, ?)",
-                (note_id, CURRENT_VERSION, body, document.plain_text()),
+                (note_id, CURRENT_VERSION, body, searchable_text(document)),
             )
             self._reindex(note_id)
             self._touch_activity(note_id, at)
@@ -310,7 +311,7 @@ class SqliteLibrary:
         with self._db.transaction():
             self._db.execute(
                 "UPDATE note_documents SET schema_version = ?, body = ?, plain_text = ? WHERE note_id = ?",
-                (CURRENT_VERSION, body, document.plain_text(), note_id),
+                (CURRENT_VERSION, body, searchable_text(document), note_id),
             )
             self._db.execute(
                 "UPDATE notes SET updated_at = ?, size_bytes = ? WHERE id = ?",
