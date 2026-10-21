@@ -8,7 +8,7 @@ It's written in Python with PySide6 (Qt) and runs completely offline. There are 
 
 ## Status
 
-The app is complete enough to use every day: the canvas, the library, boards, the calendar, export and import all work, and the test suite covers them. Two things are still missing. There is no installer yet, so for now it runs from source, and the interface is English only. The Spanish translation and a Windows installer are next. [docs/architecture.md](docs/architecture.md) has the plan and the reasons behind the main decisions.
+The app is complete enough to use every day: the canvas, the library, boards, the calendar, export and import all work, and the test suite covers them. Two things are still missing: the interface is English only, so the Spanish translation is next, and the installer isn't signed yet, so Windows shows a warning the first time you run it. [docs/architecture.md](docs/architecture.md) has the plan and the reasons behind the main decisions.
 
 ## What it does
 
@@ -48,7 +48,22 @@ Notes export to PNG, SVG, PDF and Word, and to `.schemeup` files that keep every
 | Shift+1, Shift+2, Ctrl+0 | Zoom to fit, zoom to selection, back to 100% |
 | Ctrl+Shift+E | Export |
 
-## Running it
+## Installing it on Windows
+
+To use SchemeUp like any other program, without a terminal, build it once and install it. You need [uv](https://docs.astral.sh/uv/) for the build, and [Inno Setup](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`) if you want the installer.
+
+```
+uv sync
+powershell -ExecutionPolicy Bypass -File packaging\build.ps1
+```
+
+It takes about a minute and leaves three things in `dist`: `SchemeUp-<version>-setup.exe`, a zip of the same program with its SHA-256, and the unpacked folder `dist\SchemeUp`. Run the setup to get a Start menu entry, an uninstaller and, if you tick them, a desktop shortcut and starting with Windows (which keeps the quick note hotkey ready). It installs for the current user and needs no administrator rights. Without Inno Setup, `dist\SchemeUp\SchemeUp.exe` runs from anywhere.
+
+Windows will say "Windows protected your PC" the first time, because the program isn't signed: choose More info, then Run anyway. Your notes stay in `%LOCALAPPDATA%\SchemeUp`, the same place as when running from source, and uninstalling never removes them.
+
+Before it finishes, the script starts the new program with `--smoke-test`, which checks the fonts, the icon and all five export formats, so a build that is missing something stops there. You can run that check yourself with `SchemeUp.exe --smoke-test`; it exits with 0 when everything is fine.
+
+## Running it from source
 
 You need [uv](https://docs.astral.sh/uv/). It takes care of the Python version and installs the dependencies into a local virtual environment.
 
