@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QFont, QResizeEvent
 from PySide6.QtWidgets import (
@@ -25,6 +27,14 @@ from schemeup.ui.theme import Island, Theme, icon
 MARGIN = 12
 
 
+class Chrome(Enum):
+    """How much of the editor's interface is showing around the canvas."""
+
+    FULL = "full"
+    FOCUS = "focus"  # title bar, canvas menu and properties hidden; tools and undo stay
+    NONE = "none"  # the canvas alone, for presenting
+
+
 class Stage(QWidget):
     """Holds the canvas and positions the floating islands over it."""
 
@@ -40,6 +50,7 @@ class Stage(QWidget):
 class EditorPage(QWidget):
     title_changed = Signal(str)
     export_requested = Signal()
+    present_requested = Signal()
 
     def __init__(
         self,
@@ -54,6 +65,7 @@ class EditorPage(QWidget):
         self.setObjectName("page")
         self._session = session
         self._theme = theme
+        self._chrome = Chrome.FULL
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -79,6 +91,10 @@ class EditorPage(QWidget):
         self.export_button.setToolTip(self.tr("Export") + " — Ctrl+Shift+E")
         self.export_button.setIconSize(QSize(18, 18))
         self.export_button.clicked.connect(self.export_requested.emit)
+        self.present_button = QToolButton()
+        self.present_button.setToolTip(self.tr("Present the frames as slides") + " — F5")
+        self.present_button.setIconSize(QSize(18, 18))
+        self.present_button.clicked.connect(self.present_requested.emit)
         title_layout.addWidget(self.title_edit, 1)
         # Room for extra widgets (the tag chips) between the title and the details.
         self.title_extras = QHBoxLayout()
@@ -87,6 +103,7 @@ class EditorPage(QWidget):
         title_layout.addSpacing(10)
         title_layout.addWidget(self.meta_label)
         title_layout.addSpacing(8)
+        title_layout.addWidget(self.present_button)
         title_layout.addWidget(self.export_button)
         layout.addWidget(self.title_bar)
 
@@ -152,12 +169,27 @@ class EditorPage(QWidget):
         self.undo_button.setIcon(icon("arrow-back-up", theme.text))
         self.redo_button.setIcon(icon("arrow-forward-up", theme.text))
         self.export_button.setIcon(icon("download", theme.text))
+        self.present_button.setIcon(icon("presentation", theme.text))
+
+    @property
+    def chrome(self) -> Chrome:
+        return self._chrome
+
+    def set_chrome(self, chrome: Chrome) -> None:
+        self._chrome = chrome
+        self.title_bar.setVisible(chrome is Chrome.FULL)
+        self.properties.set_suppressed(chrome is not Chrome.FULL)
+        self.place_islands()
 
     def place_islands(self) -> None:
         w, h = self.stage.width(), self.stage.height()
         self.canvas.setGeometry(0, 0, w, h)
+        self.toolbar.setVisible(self._chrome is not Chrome.NONE)
+        self.history_island.setVisible(self._chrome is not Chrome.NONE)
+        self.menu_island.setVisible(self._chrome is Chrome.FULL)
         self.toolbar.adjustSize()
-        tx = max((w - self.toolbar.width()) // 2, self.menu_island.width() + MARGIN)
+        left = self.menu_island.width() + MARGIN if self._chrome is Chrome.FULL else MARGIN
+        tx = max((w - self.toolbar.width()) // 2, left)
         self.toolbar.move(tx, MARGIN - 4)
         self.menu_island.adjustSize()
         self.menu_island.move(MARGIN - 6, MARGIN - 4)

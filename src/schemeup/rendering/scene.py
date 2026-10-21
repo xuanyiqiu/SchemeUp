@@ -160,10 +160,13 @@ class SceneRenderer:
         hidden: frozenset[str] = frozenset(),
         faded: frozenset[str] = frozenset(),
         editing_text: str | None = None,
+        frame_chrome: bool = True,
     ) -> None:
+        """Paint `elements` in order. Without `frame_chrome`, frames still clip their
+        children but draw no outline or name (a presentation shows the content only)."""
         frames = {f.id: f for f in document.frames()}
         for element in elements:
-            if element.id in hidden:
+            if element.id in hidden or (not frame_chrome and isinstance(element, Frame)):
                 continue
             frame = frames.get(element.frame_id) if element.frame_id else None
             if frame is not None:

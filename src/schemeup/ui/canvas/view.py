@@ -39,6 +39,7 @@ from PySide6.QtGui import (
     QMouseEvent,
     QNativeGestureEvent,
     QPainter,
+    QPainterPath,
     QPaintEvent,
     QResizeEvent,
     QTabletEvent,
@@ -116,6 +117,24 @@ ZOOM_SETTLE_MS = 150  # quiet time after zoom input before an overshoot springs 
 OVERLAY_MARGIN = 16
 HIT_TOLERANCE_PX = 8.0
 SNAP_DISTANCE_PX = 8.0
+CURTAIN_ALPHA = 190  # how far the area around the current slide is dimmed
+SLIDE_WHEEL_GAP = 0.35  # seconds between slide changes from a wheel or touchpad
+NEXT_SLIDE_KEYS = (
+    Qt.Key.Key_Right,
+    Qt.Key.Key_Down,
+    Qt.Key.Key_PageDown,
+    Qt.Key.Key_Space,
+    Qt.Key.Key_Return,
+    Qt.Key.Key_Enter,
+    Qt.Key.Key_N,
+)
+PREVIOUS_SLIDE_KEYS = (
+    Qt.Key.Key_Left,
+    Qt.Key.Key_Up,
+    Qt.Key.Key_PageUp,
+    Qt.Key.Key_Backspace,
+    Qt.Key.Key_P,
+)
 CLIPBOARD_MIME = "application/x-schemeup-elements"
 
 
@@ -133,6 +152,10 @@ class CanvasView(QWidget):
     tool_changed = Signal(object)
     snapping_changed = Signal()
     copy_png_requested = Signal()
+    slide_step = Signal(int)  # +1 or -1, while presenting
+    slide_jump = Signal(int)  # an absolute slide index, -1 for the last
+    presentation_exited = Signal()
+    presentation_activity = Signal()
 
     def __init__(
         self,
@@ -168,6 +191,13 @@ class CanvasView(QWidget):
         self.snap_objects = True
         self.snap_grid = True
         self.tool_locked = False
+
+        # Presenting: input turns into slide navigation and everything but the
+        # current slide is dimmed.
+        self._presenting = False
+        self._spotlight: Rect | None = None
+        self._last_slide_wheel = 0.0
+        self._stage_cursor = Qt.CursorShape.ArrowCursor
 
         # Camera motion channels, stepped together by the frame timer.
         self._zoom_spring: Spring | None = None
@@ -300,6 +330,35 @@ class CanvasView(QWidget):
         if kind not in (ToolKind.SELECT, ToolKind.HAND):
             self._session.select(())
         self.tool_changed.emit(kind)
+        self.update()
+
+    @property
+    def presenting(self) -> bool:
+        return self._presenting
+
+    def set_presenting(self, presenting: bool) -> None:
+        """Turn the canvas into a read-only stage (or back into an editor)."""
+        if presenting == self._presenting:
+            return
+        if presenting:
+            if self.text_editor.element_id is not None:
+                self.text_editor.commit()
+            self._tool.cancel()
+            self.set_tool(ToolKind.SELECT)
+            self._session.select(())
+        self._presenting = presenting
+        self._spotlight = None
+        # The editing shortcuts (Delete, arrows, tool letters) must not act on a slide show.
+        for action in self.actions():
+            action.setEnabled(not presenting)
+        self._update_cursor()
+        self._update_overlays()
+        self.update()
+
+    def present(self, frame: Rect, animate: bool = True) -> None:
+        """Light up `frame` and fly the camera so it fills the view."""
+        self._spotlight = frame
+        self.fit_to(frame, max_zoom=4.0, padding=48, animate=animate)
         self.update()
 
     def set_snapping(self, objects: bool | None = None, grid: bool | None = None) -> None:
@@ -632,13 +691,19 @@ class CanvasView(QWidget):
         )
         self._start_frames()
 
-    def fit_to(self, rect: Rect | None, max_zoom: float = 1.0) -> None:
+    def fit_to(
+        self,
+        rect: Rect | None,
+        max_zoom: float = 1.0,
+        padding: float = 60.0,
+        animate: bool = True,
+    ) -> None:
         if rect is None:
             self.recenter()
             return
-        target = self._camera.fitted_to(rect, self._viewport(), padding=60, max_zoom=max_zoom)
+        target = self._camera.fitted_to(rect, self._viewport(), padding=padding, max_zoom=max_zoom)
         self._stop_motion()
-        if self._reduce_motion:
+        if self._reduce_motion or not animate:
             self.set_camera(target)
             return
         self._camera_spring = CameraSpring.between(
@@ -727,8 +792,14 @@ class CanvasView(QWidget):
             background=settings.background,
             faded=self._faded,
             editing_text=editing,
+            frame_chrome=not self._presenting,
         )
         painter.restore()
+
+        if self._presenting:
+            self._paint_curtain(painter)
+            painter.end()
+            return
 
         if self._highlight is not None:
             paint_highlight(painter, self._highlight, self._camera, self._theme.selection)
@@ -750,6 +821,19 @@ class CanvasView(QWidget):
         if not document.order and editing is None:
             self._paint_empty_hint(painter)
         painter.end()
+
+    def _paint_curtain(self, painter: QPainter) -> None:
+        """Dim everything outside the slide, so its neighbours show only as a hint."""
+        if self._spotlight is None:
+            return
+        a = self._camera.to_screen(Point(self._spotlight.left, self._spotlight.top))
+        b = self._camera.to_screen(Point(self._spotlight.right, self._spotlight.bottom))
+        curtain = QPainterPath()
+        curtain.addRect(QRectF(self.rect()))
+        curtain.addRect(QRectF(a.x, a.y, b.x - a.x, b.y - a.y))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(8, 8, 12, CURTAIN_ALPHA))
+        painter.drawPath(curtain)  # odd-even fill leaves the slide itself clear
 
     def _paint_empty_hint(self, painter: QPainter) -> None:
         muted = QColor(self._theme.muted)
@@ -776,10 +860,19 @@ class CanvasView(QWidget):
             self._camera = self._home_camera()
             if self._session.document.order:
                 self.show_document()
+        if self._presenting and self._spotlight is not None:
+            self.fit_to(self._spotlight, max_zoom=4.0, padding=48, animate=False)
         self._place_overlays()
         self._update_overlays()
 
     def wheelEvent(self, event: QWheelEvent) -> None:
+        if self._presenting:
+            now = self._now()
+            if event.angleDelta().y() and now - self._last_slide_wheel > SLIDE_WHEEL_GAP:
+                self._last_slide_wheel = now
+                self.slide_step.emit(-1 if event.angleDelta().y() > 0 else 1)
+            event.accept()
+            return
         anchor = _point(event.position())
         pixel = event.pixelDelta()
         angle = event.angleDelta()
@@ -848,6 +941,14 @@ class CanvasView(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         self.setFocus()
+        if self._presenting:
+            button = event.button()
+            if button == Qt.MouseButton.LeftButton:
+                self.slide_step.emit(1)
+            elif button in (Qt.MouseButton.RightButton, Qt.MouseButton.BackButton):
+                self.slide_step.emit(-1)
+            event.accept()
+            return
         button = event.button()
         if button == Qt.MouseButton.MiddleButton or (
             button == Qt.MouseButton.LeftButton and self._space_held
@@ -873,6 +974,10 @@ class CanvasView(QWidget):
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         self._last_mouse = _point(event.position())
+        if self._presenting:
+            self.presentation_activity.emit()
+            event.accept()
+            return
         if self._panning:
             self.drag_pan(_point(event.position()))
             event.accept()
@@ -900,6 +1005,9 @@ class CanvasView(QWidget):
         super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        if self._presenting:
+            self.mousePressEvent(event)  # two quick clicks are two steps, not a text edit
+            return
         if event.button() == Qt.MouseButton.LeftButton:
             self._tool.double_click(self._pointer(event))
             event.accept()
@@ -907,6 +1015,9 @@ class CanvasView(QWidget):
         super().mouseDoubleClickEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
+        if self._presenting:
+            self._present_key(event)
+            return
         if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
             self._space_held = True
             self.setCursor(Qt.CursorShape.OpenHandCursor)
@@ -935,7 +1046,25 @@ class CanvasView(QWidget):
         self._update_cursor()
         super().focusOutEvent(event)
 
+    def _present_key(self, event: QKeyEvent) -> None:
+        key = event.key()
+        self.presentation_activity.emit()
+        if key in NEXT_SLIDE_KEYS:
+            self.slide_step.emit(1)
+        elif key in PREVIOUS_SLIDE_KEYS:
+            self.slide_step.emit(-1)
+        elif key == Qt.Key.Key_Home:
+            self.slide_jump.emit(0)
+        elif key == Qt.Key.Key_End:
+            self.slide_jump.emit(-1)
+        elif key in (Qt.Key.Key_Escape, Qt.Key.Key_Q):
+            self.presentation_exited.emit()
+        else:
+            event.ignore()
+
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
+        if self._presenting:
+            return
         world = self._camera.to_world(_point(QPointF(event.pos())))
         hit = self.hit(world)
         if hit is not None and hit.id not in self._session.selection:
@@ -1178,8 +1307,15 @@ class CanvasView(QWidget):
     def _now(self) -> float:
         return self._clock.nsecsElapsed() / 1e9
 
+    def show_stage_cursor(self, visible: bool) -> None:
+        """While presenting, the pointer hides itself when it has not moved for a while."""
+        self._stage_cursor = Qt.CursorShape.ArrowCursor if visible else Qt.CursorShape.BlankCursor
+        self._update_cursor()
+
     def _update_cursor(self) -> None:
-        if self._panning:
+        if self._presenting:
+            self.setCursor(self._stage_cursor)
+        elif self._panning:
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
         elif self._space_held:
             self.setCursor(Qt.CursorShape.OpenHandCursor)
@@ -1194,7 +1330,10 @@ class CanvasView(QWidget):
         return visible.intersects(bounds)
 
     def _update_overlays(self) -> None:
-        self.recenter_button.setVisible(self._has_viewport and not self._content_visible())
+        self.zoom_button.setVisible(not self._presenting)
+        self.recenter_button.setVisible(
+            self._has_viewport and not self._presenting and not self._content_visible()
+        )
         self.zoom_button.setText(f"{round(self._camera.zoom * 100)}%")
         self.zoom_button.adjustSize()
         self._place_overlays()

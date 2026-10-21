@@ -1,49 +1,10 @@
-from collections.abc import Iterator
-from typing import Any
-
-import pytest
 from pytestqt.qtbot import QtBot
 
-from schemeup.application.editor import EditorSession
 from schemeup.application.library import LibraryService
-from schemeup.application.settings import MemorySettingsStore, Settings
-from schemeup.domain.document import Document
 from schemeup.domain.elements import Rectangle
-from schemeup.infrastructure.database import Database
-from schemeup.infrastructure.library_store import SqliteAssetStore, SqliteLibrary
-from schemeup.rendering.text import QtTextMeasurer
 from schemeup.ui.canvas.tools import ToolKind
-from schemeup.ui.main_window import Environment, MainWindow
+from schemeup.ui.main_window import MainWindow
 from tests.ui.conftest import Mouse
-
-
-@pytest.fixture
-def library() -> LibraryService:
-    return LibraryService(SqliteLibrary(Database(":memory:")), QtTextMeasurer())
-
-
-@pytest.fixture
-def window(qtbot: QtBot, library: LibraryService, tmp_path: Any) -> Iterator[MainWindow]:
-    store = MemorySettingsStore(Settings(close_to_tray=False, theme="light"))
-    env = Environment(
-        settings=store.load(),
-        save_settings=store.save,
-        library_path=tmp_path / "library.sqlite3",
-        backups_dir=tmp_path / "backups",
-        backup_now=lambda: None,
-        register_hotkey=lambda _text: "",
-        hotkey_supported=False,
-        reduce_motion=True,
-    )
-    session = EditorSession(Document(), QtTextMeasurer())
-    db = Database(":memory:")
-    win = MainWindow(library, session, assets=SqliteAssetStore(db), env=env)
-    qtbot.addWidget(win)
-    win.resize(1200, 800)
-    win.show()
-    qtbot.waitExposed(win)
-    yield win
-    win._quitting = True
 
 
 def test_starts_on_the_welcome_page(window: MainWindow) -> None:

@@ -1,20 +1,11 @@
 from datetime import date, datetime
 
-import pytest
 from pytestqt.qtbot import QtBot
 
 from schemeup.application.library import LibraryService
-from schemeup.infrastructure.database import Database
-from schemeup.infrastructure.library_store import SqliteLibrary
-from schemeup.rendering.text import QtTextMeasurer
 from schemeup.ui.board_view import BoardView, ColumnWidget
 from schemeup.ui.calendar_view import CalendarView, month_grid, week_days
 from schemeup.ui.theme import LIGHT
-
-
-@pytest.fixture
-def library() -> LibraryService:
-    return LibraryService(SqliteLibrary(Database(":memory:")), QtTextMeasurer())
 
 
 def test_board_shows_columns_and_moves_cards(qtbot: QtBot, library: LibraryService) -> None:

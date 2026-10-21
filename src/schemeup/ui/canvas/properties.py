@@ -300,6 +300,7 @@ class PropertiesPanel(Island):
         self._session = session
         self._tool = ToolKind.SELECT
         self._updating = False
+        self._suppressed = False
         self._recent = RecentColors()
         self.setFixedWidth(236)
 
@@ -590,6 +591,11 @@ class PropertiesPanel(Island):
         self._tool = tool
         self.refresh()
 
+    def set_suppressed(self, suppressed: bool) -> None:
+        """Keep the panel out of the way (focus mode, presenting) whatever is selected."""
+        self._suppressed = suppressed
+        self.refresh()
+
     def _on_change(self, change: Change) -> None:
         if change in (Change.SELECTION, Change.DOCUMENT, Change.STYLE):
             self.refresh()
@@ -626,7 +632,7 @@ class PropertiesPanel(Island):
         return context[1] if context else None
 
     def refresh(self) -> None:
-        context = self._context()
+        context = None if self._suppressed else self._context()
         if context is None:
             self.hide()
             return

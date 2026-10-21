@@ -26,15 +26,18 @@ from schemeup.application.settings import Settings
 from schemeup.domain.document import Document
 from schemeup.domain.elements import Text
 from schemeup.domain.errors import SchemeUpError
+from schemeup.domain.geometry import Point
 from schemeup.domain.library import NoteInfo
+from schemeup.domain.presentation import slide_near, slides
 from schemeup.domain.templates import TEMPLATES
 from schemeup.ui.board_view import BoardView
 from schemeup.ui.calendar_view import CalendarView
 from schemeup.ui.canvas.tools import ToolKind
 from schemeup.ui.capture import CaptureWindow
-from schemeup.ui.editor_page import EditorPage
+from schemeup.ui.editor_page import Chrome, EditorPage
 from schemeup.ui.formatting import full_time, human_size
 from schemeup.ui.palette import CommandPalette, PaletteCommand
+from schemeup.ui.presenter import Presentation
 from schemeup.ui.settings_dialog import SettingsDialog
 from schemeup.ui.sidebar import Page, Sidebar
 from schemeup.ui.tags import TagEditor
@@ -44,6 +47,15 @@ from schemeup.ui.welcome import WelcomePage
 
 AUTOSAVE_IDLE_MS = 800
 AUTOSAVE_MAX_MS = 5000
+
+
+@dataclass(frozen=True, slots=True)
+class StageMemory:
+    """What the window looked like before focus mode or a presentation took it over."""
+
+    sidebar: bool
+    maximized: bool
+    fullscreen: bool
 
 
 @dataclass(slots=True)
@@ -91,6 +103,8 @@ class MainWindow(QMainWindow):
         self._note: NoteInfo | None = None
         self._saved_revision = session.revision
         self._quitting = False
+        self._focus_mode = False
+        self._stage: StageMemory | None = None
         self.setWindowTitle("SchemeUp")
         self.setWindowIcon(icon("app", self._theme.accent))
         self.resize(1400, 880)
@@ -100,6 +114,11 @@ class MainWindow(QMainWindow):
             session, self._theme, assets=assets, reduce_motion=env.reduce_motion
         )
         self.editor.export_requested.connect(self.export_note)
+        self.editor.present_requested.connect(self.start_presentation)
+        self.presentation = Presentation(
+            self.editor.canvas, self._theme, reduce_motion=env.reduce_motion, parent=self
+        )
+        self.presentation.finished.connect(self._sync_stage)
         self.editor.canvas.copy_png_requested.connect(self.copy_png)
         self._assets = assets
         self.editor.title_changed.connect(self._rename_current)
@@ -169,6 +188,7 @@ class MainWindow(QMainWindow):
         return self._note
 
     def open_note(self, note_id: int) -> None:
+        self.presentation.stop()
         if self._note is not None and self._note.id == note_id:
             self._show_editor()
             return
@@ -205,6 +225,7 @@ class MainWindow(QMainWindow):
             self.editor.title_edit.selectAll()
 
     def close_note(self) -> None:
+        self.presentation.stop()
         self.flush()
         self._note = None
         self._session.load(Document())
@@ -307,6 +328,7 @@ class MainWindow(QMainWindow):
         self.sidebar.show_page(Page.NOTES)
 
     def _show_page(self, page: object) -> None:
+        self.presentation.stop()
         if page == Page.NOTES:
             if self._note is not None:
                 self._show_editor()
@@ -396,6 +418,7 @@ class MainWindow(QMainWindow):
             app.setStyleSheet(stylesheet(theme))
         self.sidebar.set_theme(theme)
         self.editor.set_theme(theme)
+        self.presentation.set_theme(theme)
         self.welcome.set_theme(theme)
         self.board_view.set_theme(theme)
         self.calendar_view.set_theme(theme)
@@ -439,8 +462,69 @@ class MainWindow(QMainWindow):
             )
 
     def toggle_sidebar(self) -> None:
+        if self._stage is not None:
+            return  # focus mode and presentations keep it hidden
         self.sidebar.setVisible(not self.sidebar.isVisible())
         self._settings.sidebar_visible = self.sidebar.isVisible()
+
+    # Presenting and focus mode
+
+    def start_presentation(self) -> None:
+        """Present the note's frames as slides, starting from the one in view."""
+        if self.presentation.active or self._note is None:
+            return
+        if self.pages.currentWidget() is not self.editor:
+            return
+        order = slides(self._session.document)
+        if not order:
+            self.toast.show_message(
+                self.tr("Add frames to present. Each frame becomes one slide."), 5
+            )
+            return
+        canvas = self.editor.canvas
+        selected = self._session.document.bounds_of(self._session.selection)
+        view_center = canvas.camera.to_world(Point(canvas.width() / 2, canvas.height() / 2))
+        self.flush()
+        self.presentation.start(
+            order, slide_near(order, selected.center if selected else view_center)
+        )
+        self._sync_stage()
+
+    def toggle_focus_mode(self) -> None:
+        """Hide the sidebar, title bar and panels and go fullscreen, or bring them back."""
+        if self.presentation.active:
+            return
+        self._focus_mode = not self._focus_mode
+        self._sync_stage()
+        if self._focus_mode:
+            self.toast.show_message(self.tr("Focus mode. Press F11 to bring the panels back."), 4)
+
+    def _sync_stage(self) -> None:
+        """Make the window match the current mode: presenting, focus or normal."""
+        if self.presentation.active:
+            chrome = Chrome.NONE
+        elif self._focus_mode:
+            chrome = Chrome.FOCUS
+        else:
+            chrome = Chrome.FULL
+        if chrome is Chrome.FULL:
+            stage, self._stage = self._stage, None
+            self.editor.set_chrome(chrome)
+            if stage is not None:
+                self.sidebar.setVisible(stage.sidebar)
+                if not stage.fullscreen:
+                    self.showMaximized() if stage.maximized else self.showNormal()
+            self.editor.focus_canvas()
+            return
+        if self._stage is None:
+            self._stage = StageMemory(
+                self.sidebar.isVisible(), self.isMaximized(), self.isFullScreen()
+            )
+        self.sidebar.setVisible(False)
+        self.editor.set_chrome(chrome)
+        if not self.isFullScreen():
+            self.showFullScreen()
+        self.editor.focus_canvas()
 
     # Commands
 
@@ -466,6 +550,13 @@ class MainWindow(QMainWindow):
             ),
             PaletteCommand(
                 tr("Toggle dark mode"), self.toggle_theme, "Alt+Shift+D", "moon", "theme light"
+            ),
+            PaletteCommand(
+                tr("Focus mode"),
+                self.toggle_focus_mode,
+                "F11",
+                "arrows-maximize",
+                "zen distraction fullscreen",
             ),
             PaletteCommand(tr("Settings"), self.open_settings, "Ctrl+,", "settings", "preferences"),
             PaletteCommand(
@@ -506,6 +597,13 @@ class MainWindow(QMainWindow):
                     lambda: canvas.set_snapping(grid=not canvas.snap_grid),
                     "Ctrl+'",
                     "grid-dots",
+                ),
+                PaletteCommand(
+                    tr("Present frames as slides"),
+                    self.start_presentation,
+                    "F5",
+                    "presentation",
+                    "slideshow talk",
                 ),
                 PaletteCommand(
                     tr("Export…"), self.export_note, "Ctrl+Shift+E", "download", "pdf png svg word"
@@ -635,6 +733,8 @@ class MainWindow(QMainWindow):
             (("Ctrl+Shift+E",), self.export_note),
             (("Ctrl+S",), self.flush),
             (("F2",), self._focus_title),
+            (("F5",), self.start_presentation),
+            (("F11",), self.toggle_focus_mode),
             (("Ctrl+Q",), self.quit),
         ]
         for keys, handler in bindings:
@@ -647,6 +747,9 @@ class MainWindow(QMainWindow):
     # Lifecycle
 
     def save_state(self) -> None:
+        self._focus_mode = False
+        self.presentation.stop()
+        self._sync_stage()  # so the saved geometry is the window's, not a fullscreen stage
         self.flush()
         self._settings.window_geometry = bytes(self.saveGeometry().toBase64().data()).decode(
             "ascii"

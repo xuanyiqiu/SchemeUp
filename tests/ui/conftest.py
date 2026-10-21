@@ -1,17 +1,24 @@
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 from pytestqt.qtbot import QtBot
 
 from schemeup.application.editor import EditorSession
+from schemeup.application.library import LibraryService
 from schemeup.application.ports import MemoryAssetStore
+from schemeup.application.settings import MemorySettingsStore, Settings
 from schemeup.domain.document import Document
+from schemeup.infrastructure.database import Database
+from schemeup.infrastructure.library_store import SqliteAssetStore, SqliteLibrary
 from schemeup.rendering.fonts import register_fonts
 from schemeup.rendering.text import QtTextMeasurer
 from schemeup.ui.canvas.view import CanvasView
+from schemeup.ui.main_window import Environment, MainWindow
 
 NO_MODS = Qt.KeyboardModifier.NoModifier
 
@@ -19,6 +26,11 @@ NO_MODS = Qt.KeyboardModifier.NoModifier
 @pytest.fixture(autouse=True)
 def _fonts(qapp: QApplication) -> None:
     register_fonts()
+
+
+def press(widget: QWidget, key: Qt.Key, mods: Qt.KeyboardModifier = NO_MODS) -> None:
+    """Type one key into a widget."""
+    QTest.keyClick(widget, key, mods)
 
 
 class Mouse:
@@ -88,3 +100,32 @@ def canvas(qtbot: QtBot, session: EditorSession) -> Iterator[CanvasView]:
 @pytest.fixture
 def mouse(canvas: CanvasView) -> Mouse:
     return Mouse(canvas)
+
+
+@pytest.fixture
+def library() -> LibraryService:
+    return LibraryService(SqliteLibrary(Database(":memory:")), QtTextMeasurer())
+
+
+@pytest.fixture
+def window(qtbot: QtBot, library: LibraryService, tmp_path: Any) -> Iterator[MainWindow]:
+    store = MemorySettingsStore(Settings(close_to_tray=False, theme="light"))
+    env = Environment(
+        settings=store.load(),
+        save_settings=store.save,
+        library_path=tmp_path / "library.sqlite3",
+        backups_dir=tmp_path / "backups",
+        backup_now=lambda: None,
+        register_hotkey=lambda _text: "",
+        hotkey_supported=False,
+        reduce_motion=True,
+    )
+    session = EditorSession(Document(), QtTextMeasurer())
+    db = Database(":memory:")
+    win = MainWindow(library, session, assets=SqliteAssetStore(db), env=env)
+    qtbot.addWidget(win)
+    win.resize(1200, 800)
+    win.show()
+    qtbot.waitExposed(win)
+    yield win
+    win._quitting = True
