@@ -49,6 +49,22 @@ AUTOSAVE_IDLE_MS = 800
 AUTOSAVE_MAX_MS = 5000
 
 
+class PageStack(QStackedWidget):
+    """A stack that is only as demanding as the page showing.
+
+    QStackedWidget reports the largest minimum size of all its pages, so the
+    calendar's width would stop the window from being snapped to half a screen
+    while the editor, which can be narrow, is what's on display."""
+
+    def minimumSizeHint(self) -> QSize:
+        page = self.currentWidget()
+        return page.minimumSizeHint() if page is not None else super().minimumSizeHint()
+
+    def sizeHint(self) -> QSize:
+        page = self.currentWidget()
+        return page.sizeHint() if page is not None else super().sizeHint()
+
+
 @dataclass(frozen=True, slots=True)
 class StageMemory:
     """What the window looked like before focus mode or a presentation took it over."""
@@ -136,7 +152,7 @@ class MainWindow(QMainWindow):
         self.calendar_view = CalendarView(library, self._theme)
         self.calendar_view.note_opened.connect(self.open_note)
 
-        self.pages = QStackedWidget()
+        self.pages = PageStack()
         self.pages.addWidget(self.welcome)
         self.pages.addWidget(self.editor)
         self.pages.addWidget(self.board_view)

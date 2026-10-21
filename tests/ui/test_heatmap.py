@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 from PySide6.QtCore import QPointF
+from pytestqt.qtbot import QtBot
 
 from schemeup.application.library import LibraryService
 from schemeup.ui.heatmap import WEEKS, ActivityHeatmap, first_day
@@ -10,8 +11,11 @@ from schemeup.ui.theme import DARK, LIGHT
 TODAY = date(2026, 10, 21)  # a Wednesday
 
 
-def heatmap(counts: dict[date, int] | None = None) -> ActivityHeatmap:
+def heatmap(qtbot: QtBot, counts: dict[date, int] | None = None) -> ActivityHeatmap:
     widget = ActivityHeatmap(LIGHT)
+    qtbot.addWidget(widget)
+    widget.resize(widget.sizeHint())
+    widget.show()
     widget.set_data(counts or {}, TODAY)
     return widget
 
@@ -22,8 +26,8 @@ def test_the_grid_starts_on_a_monday_and_ends_this_week() -> None:
     assert (TODAY - start).days // 7 == WEEKS - 1
 
 
-def test_cells_sit_in_week_columns_with_monday_first() -> None:
-    widget = heatmap()
+def test_cells_sit_in_week_columns_with_monday_first(qtbot: QtBot) -> None:
+    widget = heatmap(qtbot)
     monday = widget.cell_rect(widget.start)
     tuesday = widget.cell_rect(widget.start + timedelta(days=1))
     next_week = widget.cell_rect(widget.start + timedelta(days=7))
@@ -32,15 +36,15 @@ def test_cells_sit_in_week_columns_with_monday_first() -> None:
     assert next_week.y() == monday.y() and next_week.x() > monday.x()
 
 
-def test_there_are_no_cells_for_the_future_or_before_the_grid() -> None:
-    widget = heatmap()
+def test_there_are_no_cells_for_the_future_or_before_the_grid(qtbot: QtBot) -> None:
+    widget = heatmap(qtbot)
     assert widget.cell_rect(TODAY) is not None
     assert widget.cell_rect(TODAY + timedelta(days=1)) is None
     assert widget.cell_rect(widget.start - timedelta(days=1)) is None
 
 
-def test_a_click_position_maps_back_to_its_day() -> None:
-    widget = heatmap()
+def test_a_click_position_maps_back_to_its_day(qtbot: QtBot) -> None:
+    widget = heatmap(qtbot)
     for day in (widget.start, TODAY, TODAY - timedelta(days=100)):
         rect = widget.cell_rect(day)
         assert rect is not None
@@ -49,8 +53,8 @@ def test_a_click_position_maps_back_to_its_day() -> None:
     assert widget.day_at(QPointF(500, 500)) is None
 
 
-def test_busier_days_get_a_stronger_color() -> None:
-    widget = heatmap({TODAY: 1, TODAY - timedelta(days=1): 8})
+def test_busier_days_get_a_stronger_color(qtbot: QtBot) -> None:
+    widget = heatmap(qtbot, {TODAY: 1, TODAY - timedelta(days=1): 8})
     quiet = widget.level_color(1)
     busy = widget.level_color(4)
     empty = widget.level_color(0)
@@ -64,8 +68,8 @@ def test_both_themes_have_visible_empty_cells() -> None:
         assert widget.level_color(0).name() != theme.panel
 
 
-def test_tooltip_text_says_how_many_notes_and_when() -> None:
-    widget = heatmap({TODAY: 3, TODAY - timedelta(days=1): 1})
+def test_tooltip_text_says_how_many_notes_and_when(qtbot: QtBot) -> None:
+    widget = heatmap(qtbot, {TODAY: 3, TODAY - timedelta(days=1): 1})
     assert widget.describe(TODAY).startswith("3 notes on")
     assert widget.describe(TODAY - timedelta(days=1)).startswith("1 note on")
     assert widget.describe(TODAY - timedelta(days=2)).startswith("Nothing on")
@@ -81,3 +85,12 @@ def test_the_welcome_page_summarises_the_year(window: MainWindow, library: Libra
     assert window.welcome.streak_label.text() == "Current streak 1 day, longest 1 day"
     today = date.today()
     assert window.welcome.heatmap.describe(today).startswith("1 note on")
+
+
+def test_a_narrow_heatmap_shows_only_the_latest_weeks(qtbot: QtBot) -> None:
+    widget = heatmap(qtbot)
+    full = widget.weeks
+    widget.resize(300, widget.height())
+    assert full == WEEKS
+    assert 8 <= widget.weeks < full
+    assert widget.cell_rect(TODAY) is not None  # this week is always there

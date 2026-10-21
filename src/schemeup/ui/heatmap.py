@@ -5,13 +5,14 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from PySide6.QtCore import QDate, QEvent, QLocale, QPointF, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QHelpEvent, QPainter, QPaintEvent, QPen
-from PySide6.QtWidgets import QToolTip, QWidget
+from PySide6.QtGui import QColor, QFont, QHelpEvent, QPainter, QPaintEvent, QPen, QResizeEvent
+from PySide6.QtWidgets import QSizePolicy, QToolTip, QWidget
 
 from schemeup.domain.streaks import LEVELS, level
 from schemeup.ui.theme import Theme
 
 WEEKS = 53
+MIN_WEEKS = 8
 CELL = 10
 GAP = 3
 LEFT = 30  # room for the weekday names
@@ -19,10 +20,10 @@ TOP = 18  # room for the month names
 SHADES = (0.28, 0.5, 0.75, 1.0)  # how much accent each level mixes in
 
 
-def first_day(today: date) -> date:
+def first_day(today: date, weeks: int = WEEKS) -> date:
     """The Monday that starts the leftmost column, so the grid ends with this week."""
     this_monday = today - timedelta(days=today.weekday())
-    return this_monday - timedelta(weeks=WEEKS - 1)
+    return this_monday - timedelta(weeks=weeks - 1)
 
 
 def mix(base: QColor, top: QColor, amount: float) -> QColor:
@@ -39,12 +40,27 @@ class ActivityHeatmap(QWidget):
         self._theme = theme
         self._counts: dict[date, int] = {}
         self._today = date.today()
+        self._weeks = WEEKS
         self._start = first_day(self._today)
-        self.setFixedSize(self.sizeHint())
+        self.setFixedHeight(TOP + 7 * (CELL + GAP))
+        self.setMinimumWidth(LEFT + MIN_WEEKS * (CELL + GAP))
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMouseTracking(True)
 
     def sizeHint(self) -> QSize:
         return QSize(LEFT + WEEKS * (CELL + GAP), TOP + 7 * (CELL + GAP))
+
+    @property
+    def weeks(self) -> int:
+        """How many weeks fit: all of them when there's room, the most recent ones when not."""
+        return self._weeks
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        fit = (self.width() - LEFT) // (CELL + GAP)
+        self._weeks = max(MIN_WEEKS, min(WEEKS, fit))
+        self._start = first_day(self._today, self._weeks)
+        self.update()
 
     def set_theme(self, theme: Theme) -> None:
         self._theme = theme
@@ -53,7 +69,7 @@ class ActivityHeatmap(QWidget):
     def set_data(self, counts: dict[date, int], today: date) -> None:
         self._counts = counts
         self._today = today
-        self._start = first_day(today)
+        self._start = first_day(today, self._weeks)
         self.update()
 
     @property
@@ -70,7 +86,7 @@ class ActivityHeatmap(QWidget):
     def day_at(self, pos: QPointF) -> date | None:
         column = int((pos.x() - LEFT) // (CELL + GAP))
         row = int((pos.y() - TOP) // (CELL + GAP))
-        if pos.x() < LEFT or pos.y() < TOP or not 0 <= column < WEEKS or not 0 <= row < 7:
+        if pos.x() < LEFT or pos.y() < TOP or not 0 <= column < self._weeks or not 0 <= row < 7:
             return None
         day = self._start + timedelta(days=column * 7 + row)
         rect = self.cell_rect(day)
@@ -124,13 +140,16 @@ class ActivityHeatmap(QWidget):
             )
 
         previous_month = 0
-        for column in range(WEEKS):
+        last_label = -4
+        for column in range(self._weeks):
             monday = self._start + timedelta(weeks=column)
             if monday > self._today:
                 break
             if monday.month != previous_month and (column == 0 or monday.day <= 7):
                 previous_month = monday.month
-                if column <= WEEKS - 3:  # a label this close to the edge would be cut off
+                # Skip a label that would overlap the previous one or be cut off at the edge.
+                if column - last_label >= 3 and column <= self._weeks - 3:
+                    last_label = column
                     name = locale.monthName(monday.month, QLocale.FormatType.ShortFormat)
                     painter.drawText(
                         QRectF(LEFT + column * (CELL + GAP), 0, 40, TOP - 4),

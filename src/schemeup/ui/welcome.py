@@ -5,12 +5,16 @@ from __future__ import annotations
 from datetime import date
 
 from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QScrollArea,
+    QSizePolicy,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -39,6 +43,8 @@ TEMPLATE_ICONS = {
     "architecture": "box-multiple",
 }
 
+CARD_MIN = 92
+
 TIPS = (
     ("Ctrl+N", "New note"),
     ("Ctrl+Alt+N", "Quick note from anywhere, even with SchemeUp in the background"),
@@ -58,8 +64,21 @@ class WelcomePage(QWidget):
         self.setObjectName("page")
         self._library = library
         self._theme = theme
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
+        # The page scrolls and shrinks with the window, so it never keeps the
+        # window from being snapped to half a screen.
+        page_layout = QVBoxLayout(self)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { background: transparent; }")
+        page_layout.addWidget(scroll)
+        content = QWidget()
+        content.setObjectName("page")
+        scroll.setWidget(content)
+        outer = QVBoxLayout(content)
+        outer.setContentsMargins(24, 0, 24, 0)
         outer.addStretch(1)
         center = QHBoxLayout()
         center.addStretch(1)
@@ -77,7 +96,8 @@ class WelcomePage(QWidget):
         start.setObjectName("section")
         column.addSpacing(10)
         column.addWidget(start)
-        grid = QGridLayout()
+        self._card_grid = QGridLayout()
+        grid = self._card_grid
         grid.setSpacing(10)
         self._cards: list[tuple[QToolButton, str]] = []
         for i, template in enumerate(TEMPLATES):
@@ -87,11 +107,14 @@ class WelcomePage(QWidget):
             card.setToolTip(self.tr(template.name))
             card.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
             card.setIconSize(QSize(26, 26))
-            card.setFixedSize(QSize(132, 96))
+            card.setMinimumSize(QSize(CARD_MIN, 96))
+            card.setMaximumWidth(150)
+            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             card.setCursor(Qt.CursorShape.PointingHandCursor)
             card.clicked.connect(lambda _c=False, t=template.id: self.template_chosen.emit(t))
             self._cards.append((card, TEMPLATE_ICONS.get(template.id, "file-text")))
             grid.addWidget(card, 0, i)
+        self._card_columns = len(self._cards)
         column.addLayout(grid)
 
         recent = QLabel(self.tr("Recent notes").upper())
@@ -114,6 +137,7 @@ class WelcomePage(QWidget):
         summary = QHBoxLayout()
         self.year_label = QLabel()
         self.year_label.setObjectName("muted")
+        self.year_label.setWordWrap(True)
         self.streak_label = QLabel()
         self.streak_label.setObjectName("muted")
         summary.addWidget(self.year_label, 1)
@@ -131,18 +155,29 @@ class WelcomePage(QWidget):
             key.setFixedWidth(96)
             label = QLabel(self.tr(text))
             label.setObjectName("muted")
+            label.setWordWrap(True)
             row.addWidget(key)
             row.addWidget(label, 1)
             column.addLayout(row)
 
         holder = QWidget()
         holder.setLayout(column)
-        holder.setFixedWidth(720)
-        center.addWidget(holder)
+        holder.setMaximumWidth(720)
+        center.addWidget(holder, 100)
         center.addStretch(1)
         outer.addLayout(center)
         outer.addStretch(2)
         self.set_theme(theme)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        # As many cards per row as fit, so a half-width window wraps them instead of clipping.
+        columns = max(2, min(len(self._cards), (self.width() - 48 + 10) // (CARD_MIN + 10)))
+        if columns == self._card_columns:
+            return
+        self._card_columns = columns
+        for i, (card, _name) in enumerate(self._cards):
+            self._card_grid.addWidget(card, i // columns, i % columns)
 
     def set_theme(self, theme: Theme) -> None:
         self._theme = theme

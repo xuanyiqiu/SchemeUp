@@ -69,3 +69,11 @@ def test_theme_toggle(window: MainWindow) -> None:
     assert not window._theme.dark
     window.toggle_theme()
     assert window._theme.dark
+
+
+def test_the_window_can_be_snapped_to_half_a_screen(window: MainWindow) -> None:
+    # Windows' snap layouts honour the minimum size. 640 is half of a 1920 px
+    # screen at 150 % scaling, the narrowest I want to support.
+    for page in (window.welcome, window.editor, window.board_view, window.calendar_view):
+        window.pages.setCurrentWidget(page)
+        assert window.minimumSizeHint().width() <= 640, type(page).__name__

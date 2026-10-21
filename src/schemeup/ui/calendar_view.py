@@ -10,8 +10,9 @@ import calendar
 from datetime import date, timedelta
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPaintEvent, QPen
+from PySide6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPaintEvent, QPen, QResizeEvent
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QButtonGroup,
     QHBoxLayout,
     QLabel,
@@ -27,6 +28,7 @@ from schemeup.application.library import CalendarDay, EventKind, LibraryEvent, L
 from schemeup.ui.theme import Theme, icon
 
 ROLE = Qt.ItemDataRole.UserRole
+NARROW_WIDTH = 760
 
 
 def month_grid(year: int, month: int) -> list[date]:
@@ -54,7 +56,7 @@ class DayGrid(QWidget):
         self.data: dict[date, CalendarDay] = {}
         self.selected = date.today()
         self.week = False
-        self.setMinimumSize(QSize(560, 420))
+        self.setMinimumSize(QSize(360, 300))
         self.setMouseTracking(True)
         self._hover: date | None = None
 
@@ -182,7 +184,8 @@ class CalendarView(QWidget):
         self._library = library
         self._theme = theme
         self._anchor = date.today()
-        layout = QHBoxLayout(self)
+        self._layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
+        layout = self._layout
         layout.setContentsMargins(24, 18, 24, 18)
         layout.setSpacing(18)
 
@@ -211,9 +214,14 @@ class CalendarView(QWidget):
         header.addWidget(self.prev)
         header.addWidget(today)
         header.addWidget(self.next)
+        self._header = header
+        self._main = main
+        self._modes = QHBoxLayout()
+        self._modes.addWidget(self.month_button)
+        self._modes.addWidget(self.week_button)
         header.addSpacing(12)
-        header.addWidget(self.month_button)
-        header.addWidget(self.week_button)
+        header.addLayout(self._modes)
+        self._modes_below = False
         main.addLayout(header)
         self.grid = DayGrid(theme)
         self.grid.day_clicked.connect(self._show_day)
@@ -225,13 +233,42 @@ class CalendarView(QWidget):
         self.day_title.setObjectName("dayTitle")
         side.addWidget(self.day_title)
         self.day_list = QListWidget()
-        self.day_list.setFixedWidth(280)
+        self.day_list.setMinimumWidth(190)
+        self.day_list.setMaximumWidth(280)
         self.day_list.itemClicked.connect(self._open_item)
         side.addWidget(self.day_list, 1)
         layout.addLayout(side)
 
         library.events.subscribe(self._on_event)
         self.set_theme(theme)
+
+    def minimumSizeHint(self) -> QSize:
+        # What the stacked (narrow) arrangement needs; the side-by-side one only
+        # applies when there is more room than this anyway.
+        return QSize(420, 520)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        # In a narrow window (half a screen) the day's notes go under the grid, not beside it.
+        narrow = self.width() < NARROW_WIDTH
+        direction = QBoxLayout.Direction.TopToBottom if narrow else QBoxLayout.Direction.LeftToRight
+        if self._layout.direction() != direction:
+            self._layout.setDirection(direction)
+            self.day_list.setMaximumWidth(16777215 if narrow else 280)
+            self.day_list.setMaximumHeight(170 if narrow else 16777215)
+        self._place_modes(self.width() < NARROW_WIDTH + 140)
+
+    def _place_modes(self, below: bool) -> None:
+        """Month/Week buttons sit in the header, or on a row of their own when it is too tight."""
+        if below == self._modes_below:
+            return
+        self._modes_below = below
+        if below:
+            self._header.removeItem(self._modes)
+            self._main.insertLayout(1, self._modes)
+        else:
+            self._main.removeItem(self._modes)
+            self._header.addLayout(self._modes)
 
     def set_theme(self, theme: Theme) -> None:
         self._theme = theme
