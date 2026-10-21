@@ -6,7 +6,16 @@ import html
 from collections.abc import Callable
 from enum import StrEnum
 
-from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QPoint, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QModelIndex,
+    QPersistentModelIndex,
+    QPoint,
+    QRect,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import QColor, QDropEvent, QFont, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -20,6 +29,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QStackedWidget,
+    QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QToolButton,
@@ -50,11 +60,43 @@ class Page(StrEnum):
 
 
 class _DateDelegate(QStyledItemDelegate):
-    """Draws a note's last-edited date, muted and right-aligned, after its title."""
+    """Draws a note's last-edited date, muted and right-aligned, after its title.
 
-    def __init__(self, parent: QWidget) -> None:
+    It also paints the selection and hover highlight itself, as one rounded bar
+    across the whole row. The stylesheet would paint it twice, once for the
+    indentation and once for the item, leaving a gap between the two."""
+
+    def __init__(self, parent: NoteTree) -> None:
         super().__init__(parent)
         self.muted = QColor("#888")
+        self.selected = QColor("#e7e4ff")
+        self.hover = QColor("#f2f1fb")
+
+    def _paint_row(self, painter: QPainter, option: QStyleOptionViewItem) -> QStyleOptionViewItem:
+        """Paint the highlight for `option`'s row and return the option without highlight state."""
+        view = self.parent()
+        assert isinstance(view, QTreeWidget)
+        state = option.state
+        color = None
+        if state & QStyle.StateFlag.State_Selected:
+            color = self.selected
+        elif state & QStyle.StateFlag.State_MouseOver:
+            color = self.hover
+        if color is not None:
+            row = QRect(0, option.rect.y(), view.viewport().width(), option.rect.height())
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawRoundedRect(row.adjusted(2, 1, -2, -1), 6, 6)
+            painter.restore()
+        plain = QStyleOptionViewItem(option)
+        plain.state &= ~(
+            QStyle.StateFlag.State_Selected
+            | QStyle.StateFlag.State_MouseOver
+            | QStyle.StateFlag.State_HasFocus
+        )
+        return plain
 
     def paint(
         self,
@@ -62,16 +104,17 @@ class _DateDelegate(QStyledItemDelegate):
         option: QStyleOptionViewItem,
         index: QModelIndex | QPersistentModelIndex,
     ) -> None:
+        plain = self._paint_row(painter, option)
         stamp = index.data(STAMP)
         if not stamp:
-            super().paint(painter, option, index)
+            super().paint(painter, plain, index)
             return
         text = relative_time(int(stamp))
         font = QFont(option.font)
         font.setPixelSize(11)
         metrics = painter.fontMetrics()
         width = metrics.horizontalAdvance(text) + 18
-        narrowed = QStyleOptionViewItem(option)
+        narrowed = QStyleOptionViewItem(plain)
         narrowed.rect = option.rect.adjusted(0, 0, -width, 0)
         super().paint(painter, narrowed, index)
         painter.save()
@@ -319,6 +362,8 @@ class Sidebar(QWidget):
         ):
             self._nav[page].setIcon(icon(name, theme.text))
         self.tree.delegate.muted = QColor(theme.muted)
+        self.tree.delegate.selected = QColor(theme.accent_soft)
+        self.tree.delegate.hover = QColor(theme.hover)
         self.refresh()
 
     # Pages

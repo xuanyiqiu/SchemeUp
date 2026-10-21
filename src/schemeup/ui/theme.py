@@ -132,13 +132,14 @@ def stylesheet(t: Theme) -> str:
     }}
     QTreeView::item, QListView::item {{ padding: 4px 2px; border-radius: 6px; }}
     QTreeView {{ show-decoration-selected: 0; }}
-    QTreeView::branch {{ background: transparent; border-image: none; image: none; }}
+    QTreeView::branch, QTreeView::branch:selected, QTreeView::branch:hover {{
+        background: transparent; border-image: none; image: none;
+    }}
     QTreeView::branch:has-children:closed {{ image: url({closed}); }}
     QTreeView::branch:has-children:open {{ image: url({opened}); }}
-    QTreeView::item:hover, QListView::item:hover {{ background: {t.hover}; }}
-    QTreeView::item:selected, QListView::item:selected {{
-        background: {t.accent_soft}; color: {t.text};
-    }}
+    QListView::item:hover {{ background: {t.hover}; }}
+    QListView::item:selected {{ background: {t.accent_soft}; color: {t.text}; }}
+    QTreeView::item:hover, QTreeView::item:selected {{ background: transparent; color: {t.text}; }}
     QSlider::groove:horizontal {{ height: 4px; background: {t.border}; border-radius: 2px; }}
     QSlider::sub-page:horizontal {{ background: {t.accent}; border-radius: 2px; }}
     QSlider::handle:horizontal {{
