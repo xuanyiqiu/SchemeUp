@@ -22,6 +22,7 @@ MM = 96 / 25.4
 # until FULL_SPACING_PX, where it becomes fully opaque.
 MIN_SPACING_PX = 6.0
 FULL_SPACING_PX = 12.0
+MAGNET_FRACTION = 4.0  # snapping reaches at most 1/4 of the spacing between lines
 SINGLE_LINE = 1e9  # spacing for a family that is really one line (a margin)
 
 
@@ -266,9 +267,17 @@ def _family_lines(family: LineFamily, visible: Rect, zoom: float) -> list[LineGr
 
 
 def snap_to_sheet(
-    sheet: Sheet, value: float, orientation: Orientation, zoom: float
+    sheet: Sheet,
+    value: float,
+    orientation: Orientation,
+    zoom: float,
+    max_distance: float = math.inf,
 ) -> float | None:
-    """Nearest visible line of `sheet` across `orientation` (x for vertical lines)."""
+    """Nearest visible line of `sheet` across `orientation` (x for vertical lines).
+
+    Only lines within `max_distance` count, and never farther than a quarter of the
+    line spacing: a magnet that holds near a line, not a quantizer that moves
+    everything in whole cells."""
     best: float | None = None
     for family in sheet.line_families():
         if family.orientation is not orientation or not family.snaps:
@@ -277,6 +286,8 @@ def snap_to_sheet(
         if spacing is None or spacing >= SINGLE_LINE:
             continue
         candidate = family.offset + round((value - family.offset) / spacing) * spacing
+        if abs(candidate - value) > min(max_distance, spacing / MAGNET_FRACTION):
+            continue
         if best is None or abs(candidate - value) < abs(best - value):
             best = candidate
     return best

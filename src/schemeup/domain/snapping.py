@@ -181,6 +181,37 @@ def _resolve(candidates: list[_Candidate], threshold: float) -> tuple[float | No
     return best.offset, guides
 
 
+class SnapHold:
+    """Keeps a drag stuck to the line it snapped to until the pointer clearly leaves.
+
+    Without it a shape flickers between a line and the free position when the
+    pointer hovers around the snap distance. With it the line holds a little
+    longer than it takes to catch, like a magnet."""
+
+    def __init__(self) -> None:
+        self._held: list[float | None] = [None, None]  # snapped drag distance, per axis
+
+    def reset(self) -> None:
+        self._held = [None, None]
+
+    def apply(self, raw: Point, offset: Point, release: float) -> Point:
+        """The drag distance to use, given the raw one and what snapping would add."""
+        result: list[float] = []
+        for axis, (value, snap) in enumerate(((raw.x, offset.x), (raw.y, offset.y))):
+            held = self._held[axis]
+            if held is not None and abs(value - held) <= release:
+                result.append(held)
+                continue
+            if snap != 0.0:
+                held = value + snap
+                self._held[axis] = held
+                result.append(held)
+            else:
+                self._held[axis] = None
+                result.append(value)
+        return Point(result[0], result[1])
+
+
 def snap_rect(
     rect: Rect,
     targets: SnapTargets | None,
@@ -205,7 +236,7 @@ def snap_rect(
         if offset is None and sheet is not None:
             edge = rect.left if horizontal else rect.top
             orientation = Orientation.VERTICAL if horizontal else Orientation.HORIZONTAL
-            line = snap_to_sheet(sheet.sheet, edge, orientation, sheet.zoom)
+            line = snap_to_sheet(sheet.sheet, edge, orientation, sheet.zoom, threshold)
             if line is not None:
                 offset = line - edge
         offsets.append(offset or 0.0)

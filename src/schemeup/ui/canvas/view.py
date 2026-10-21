@@ -116,7 +116,9 @@ BOUNCE_BACK_RESPONSE = 0.3  # a rubber-banded zoom returning to its limit
 ZOOM_SETTLE_MS = 150  # quiet time after zoom input before an overshoot springs back
 OVERLAY_MARGIN = 16
 HIT_TOLERANCE_PX = 8.0
-SNAP_DISTANCE_PX = 8.0
+SNAP_DISTANCE_PX = 5.0  # how close a shape must come to a line for it to catch
+SNAP_RELEASE_FACTOR = 1.6  # a caught line lets go this much farther out
+SNAP_MAX_SPEED = 600.0  # screen px/s; moving faster than this skips snapping
 CURTAIN_ALPHA = 190  # how far the area around the current slide is dimmed
 SLIDE_WHEEL_GAP = 0.35  # seconds between slide changes from a wheel or touchpad
 NEXT_SLIDE_KEYS = (
@@ -212,6 +214,7 @@ class CanvasView(QWidget):
         self._space_held = False
         self._last_pan_pos = Point(0, 0)
         self._velocity = VelocityTracker()
+        self._pointer_velocity = VelocityTracker(window=0.06)
         self._pointer_down = False
         self._pressure = 0.5
         self._tablet = False
@@ -376,7 +379,14 @@ class CanvasView(QWidget):
     def snap_threshold(self) -> float:
         return SNAP_DISTANCE_PX / self._camera.zoom
 
+    def snap_release(self) -> float:
+        return self.snap_threshold() * SNAP_RELEASE_FACTOR
+
     def snapping(self, pointer: Pointer) -> bool:
+        # Sweeping across the canvas shouldn't be pulled around by every line it passes;
+        # snapping engages again as the pointer slows down to land.
+        if pointer.speed > SNAP_MAX_SPEED:
+            return False
         return (self.snap_objects or self.snap_grid) and not pointer.ctrl
 
     def snap_targets(self, exclude: set[str]) -> SnapTargets | None:
@@ -937,10 +947,16 @@ class CanvasView(QWidget):
             alt=bool(mods & Qt.KeyboardModifier.AltModifier),
             pressure=self._pressure if tablet else 0.5,
             tablet=tablet,
+            speed=self._pointer_speed(),
         )
+
+    def _pointer_speed(self) -> float:
+        v = self._pointer_velocity.velocity(self._now())
+        return math.hypot(v.x, v.y)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         self.setFocus()
+        self._pointer_velocity.reset()
         if self._presenting:
             button = event.button()
             if button == Qt.MouseButton.LeftButton:
@@ -974,6 +990,7 @@ class CanvasView(QWidget):
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         self._last_mouse = _point(event.position())
+        self._pointer_velocity.add(self._now(), self._last_mouse)
         if self._presenting:
             self.presentation_activity.emit()
             event.accept()

@@ -33,7 +33,14 @@ from schemeup.domain.elements import (
 )
 from schemeup.domain.geometry import Point, Rect
 from schemeup.domain.hit import hit_test, ids_in_rect
-from schemeup.domain.snapping import Guide, SheetSnap, SnapTargets, snap_point, snap_rect
+from schemeup.domain.snapping import (
+    Guide,
+    SheetSnap,
+    SnapHold,
+    SnapTargets,
+    snap_point,
+    snap_rect,
+)
 from schemeup.domain.style import MAX_FONT_SIZE, MIN_FONT_SIZE
 from schemeup.domain.text import fit_text
 from schemeup.ui.canvas.overlays import Handle, SelectionFrame, selection_frame
@@ -66,6 +73,7 @@ class Pointer:
     alt: bool = False
     pressure: float = 0.5
     tablet: bool = False
+    speed: float = 0.0  # how fast the pointer is moving, in screen pixels per second
 
 
 class ToolHost(Protocol):
@@ -75,6 +83,7 @@ class ToolHost(Protocol):
     def camera(self) -> Camera: ...
     def tolerance(self) -> float: ...
     def snap_threshold(self) -> float: ...
+    def snap_release(self) -> float: ...
     def snapping(self, pointer: Pointer) -> bool: ...
     def snap_targets(self, exclude: set[str]) -> SnapTargets | None: ...
     def sheet_snap(self) -> SheetSnap | None: ...
@@ -189,6 +198,7 @@ class SelectionTool(Tool):
         self._clicked: frozenset[str] = frozenset()
         self._dup: Changes = {}
         self._start_bounds: Rect | None = None
+        self._hold = SnapHold()
         # Offset between where the pointer grabbed a handle and the edge or point it
         # controls, so the shape doesn't jump to the pointer on the first move.
         self._grab = Point(0.0, 0.0)
@@ -290,6 +300,7 @@ class SelectionTool(Tool):
         exclude = set(self._ids)
         exclude.update(a.id for a in document.arrows_bound_to(self._ids))
         self._targets = self.host.snap_targets(exclude)
+        self._hold.reset()
         self._mode = _Mode.MOVE
 
     def _drag_move(self, p: Pointer) -> None:
@@ -298,12 +309,15 @@ class SelectionTool(Tool):
             delta = Point(delta.x, 0.0) if abs(delta.x) >= abs(delta.y) else Point(0.0, delta.y)
         guides: tuple[Guide, ...] = ()
         if self._start_bounds is not None and self.host.snapping(p):
-            moved = self._start_bounds.translated(delta.x, delta.y)
-            result = snap_rect(
-                moved, self._targets, self.host.sheet_snap(), self.host.snap_threshold()
-            )
-            delta = delta + result.offset
-            guides = result.guides
+            sheet, threshold = self.host.sheet_snap(), self.host.snap_threshold()
+            raw = self._start_bounds.translated(delta.x, delta.y)
+            result = snap_rect(raw, self._targets, sheet, threshold)
+            delta = self._hold.apply(delta, result.offset, self.host.snap_release())
+            # Guides belong to where the shape ended up, which a held snap keeps off the raw spot.
+            held = self._start_bounds.translated(delta.x, delta.y)
+            guides = snap_rect(held, self._targets, sheet, threshold).guides
+        else:
+            self._hold.reset()
         self.host.set_guides(guides)
         changes = commands.move(self._origin, self._ids, delta.x, delta.y)
         self._changes = changes

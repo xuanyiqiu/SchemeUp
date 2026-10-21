@@ -203,3 +203,15 @@ def test_snapping_is_off_until_switched_on(view: CanvasView) -> None:
     assert not view.snap_grid
     assert not Settings().snap_objects
     assert not Settings().snap_grid
+
+
+def test_snapping_waits_for_the_pointer_to_slow_down(view: CanvasView) -> None:
+    from schemeup.ui.canvas.tools import Pointer
+    from schemeup.ui.canvas.view import SNAP_MAX_SPEED
+
+    view.set_snapping(objects=True)
+    slow = Pointer(Point(0, 0), Point(0, 0), speed=SNAP_MAX_SPEED / 2)
+    fast = Pointer(Point(0, 0), Point(0, 0), speed=SNAP_MAX_SPEED * 2)
+    assert view.snapping(slow)
+    assert not view.snapping(fast)
+    assert view.snap_release() > view.snap_threshold()
