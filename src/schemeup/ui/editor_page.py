@@ -17,8 +17,10 @@ from PySide6.QtWidgets import (
 
 from schemeup.application.editor import Change, EditorSession
 from schemeup.application.ports import AssetStore
+from schemeup.domain.structures import StructureKind
 from schemeup.ui.canvas.canvas_menu import CanvasMenu
 from schemeup.ui.canvas.properties import PropertiesPanel
+from schemeup.ui.canvas.structures_picker import StructurePicker
 from schemeup.ui.canvas.toolbar import Toolbar
 from schemeup.ui.canvas.tools import ToolKind
 from schemeup.ui.canvas.view import CanvasView
@@ -118,6 +120,10 @@ class EditorPage(QWidget):
         self.toolbar.lock_toggled.connect(self._set_tool_lock)
         self.canvas.tool_changed.connect(self._on_tool_changed)
 
+        self.structures = StructurePicker(theme, self)
+        self.toolbar.structures_requested.connect(self.open_structures)
+        self.structures.insert_requested.connect(self._insert_structure)
+
         self.properties = PropertiesPanel(session, theme, self.stage)
         self.properties.resized.connect(self.place_islands)
 
@@ -166,6 +172,7 @@ class EditorPage(QWidget):
         self.menu_island.set_theme(theme)
         self.history_island.set_theme(theme)
         self.canvas_menu.set_theme(theme)
+        self.structures.set_theme(theme)
         self.menu_button.setIcon(icon("menu-2", theme.text))
         self.undo_button.setIcon(icon("arrow-back-up", theme.text))
         self.redo_button.setIcon(icon("arrow-forward-up", theme.text))
@@ -214,6 +221,19 @@ class EditorPage(QWidget):
         if width != self._zoom_label_width:
             self._zoom_label_width = width
             self.place_islands()
+
+    def open_structures(self, kind: StructureKind | None = None) -> None:
+        """Open the data structure picker under its toolbar button."""
+        button = self.toolbar.structures_button
+        width = self.structures.sizeHint().width()
+        centre = button.mapToGlobal(QPoint(button.width() // 2, button.height() + 10))
+        self.structures.set_style(self._session.style)
+        self.structures.open_at(QPoint(centre.x() - width // 2, centre.y()), kind)
+
+    def _insert_structure(self, kind: object, text: str) -> None:
+        if isinstance(kind, StructureKind):
+            self.canvas.insert_structure(kind, text)
+        self.focus_canvas()
 
     def _open_canvas_menu(self) -> None:
         anchor = self.menu_island.mapToGlobal(QPoint(Island.SHADOW, self.menu_island.height()))

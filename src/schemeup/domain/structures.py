@@ -36,6 +36,7 @@ from schemeup.domain.style import (
     Style,
     TextAlign,
 )
+from schemeup.domain.text import LABEL_PADDING
 
 MAX_ITEMS = 64
 CELL_HEIGHT = 44.0
@@ -59,16 +60,17 @@ class StructureKind(StrEnum):
     GRAPH = "graph"
 
 
-# What the input line looks like for each kind, shown as the placeholder in the picker.
+# A sample line for each kind: the picker's placeholder, and what it draws when you press Enter
+# without typing anything.
 EXAMPLES: dict[StructureKind, str] = {
     StructureKind.ARRAY: "3, 1, 4, 1, 5, 9",
     StructureKind.MATRIX: "1 2 3; 4 5 6; 7 8 9",
     StructureKind.LINKED_LIST: "1 -> 2 -> 3 -> 4",
     StructureKind.DOUBLY_LINKED_LIST: "1, 2, 3, 4",
-    StructureKind.STACK: "1, 2, 3  (the last one is the top)",
-    StructureKind.QUEUE: "1, 2, 3  (the first one is the front)",
+    StructureKind.STACK: "1, 2, 3",
+    StructureKind.QUEUE: "1, 2, 3",
     StructureKind.TREE: "1, 2, 3, null, 4, 5, 6",
-    StructureKind.GRAPH: "A-B, B-C, C-A, A->D   (a-b:5 adds a weight)",
+    StructureKind.GRAPH: "A-B, B-C, C-A, A->D",
 }
 
 
@@ -162,6 +164,19 @@ def _caption_style(base: Style) -> Style:
 def _cell_width(words: list[str], font_size: float) -> float:
     longest = max((len(w) for w in words), default=1)
     return max(MIN_CELL_WIDTH, math.ceil(longest * font_size * 0.62 + 26))
+
+
+def _circle_size(words: list[str], font_size: float) -> float:
+    """Diameter of a node circle that holds its label on one line, so the editor does not
+    stretch it.
+
+    An ellipse's label area is the square inscribed in it, so the circle has to be
+    root two times as wide and as tall as the text plus its padding."""
+    longest = max((len(w) for w in words), default=1)
+    text_width = longest * font_size * 0.75  # the hand font is wide: "20" is 1.5 sizes across
+    line = font_size * 1.1  # the tight line height of the canvas fonts, rounded up
+    needed = max(text_width, line) + 2 * LABEL_PADDING
+    return max(CELL_HEIGHT, math.ceil(needed * math.sqrt(2)))
 
 
 def _shape(kind: ShapeKind, rect: Rect, label: str, style: Style) -> Rectangle | Ellipse:
@@ -318,7 +333,7 @@ def _tree(root: _TreeNode, base: Style) -> list[Element]:
             collect(node.right)
 
     collect(root)
-    size = max(CELL_HEIGHT, _cell_width(labels, base.font_size) - 8)
+    size = _circle_size(labels, base.font_size)
     step_x, step_y = size + 14, size + LEVEL_GAP
     placed: list[tuple[_TreeNode, int, int]] = []  # node, in-order column, depth
 
@@ -373,7 +388,7 @@ def _parse_edges(text: str) -> tuple[list[str], list[tuple[str, str, bool, str]]
 
 def _graph(order: list[str], edges: list[tuple[str, str, bool, str]], base: Style) -> list[Element]:
     nodes = _node_style(base)
-    size = max(CELL_HEIGHT, _cell_width(order, base.font_size) - 8)
+    size = _circle_size(order, base.font_size)
     count = len(order)
     radius = 0.0 if count == 1 else max(90.0, count * (size + 16) / (2 * math.pi))
     shapes: dict[str, Element] = {}

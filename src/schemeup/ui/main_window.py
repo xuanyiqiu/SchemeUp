@@ -29,6 +29,7 @@ from schemeup.domain.errors import SchemeUpError
 from schemeup.domain.geometry import Point
 from schemeup.domain.library import NoteInfo
 from schemeup.domain.presentation import slide_near, slides
+from schemeup.domain.structures import StructureKind
 from schemeup.domain.templates import TEMPLATES
 from schemeup.ui.board_view import BoardView
 from schemeup.ui.calendar_view import CalendarView
@@ -632,6 +633,7 @@ class MainWindow(QMainWindow):
                 ),
                 PaletteCommand(tr("Rename note"), self._focus_title, "F2", "file-text"),
                 *self._page_commands(),
+                *self._structure_commands(),
                 PaletteCommand(tr("Duplicate note"), self._duplicate_current, "", "copy"),
                 PaletteCommand(
                     tr("Move note to trash"), lambda: self._library.trash_note(note_id), "", "trash"
@@ -661,6 +663,31 @@ class MainWindow(QMainWindow):
                 )
         commands.append(PaletteCommand(tr("Quit"), self.quit, "Ctrl+Q", "x", "exit close"))
         return commands
+
+    def _structure_commands(self) -> list[PaletteCommand]:
+        picker = self.editor.structures
+        commands = [
+            PaletteCommand(
+                self.tr("Draw a data structure…"),
+                self.open_structures,
+                "Ctrl+Shift+D",
+                "binary-tree",
+                "array list tree graph stack queue matrix",
+            )
+        ]
+        for kind in StructureKind:
+            title = self.tr("Data structure: %1").replace("%1", picker.name(kind))
+            commands.append(
+                PaletteCommand(title, self._structure_opener(kind), "", "binary-tree", "draw")
+            )
+        return commands
+
+    def _structure_opener(self, kind: StructureKind) -> Callable[[], None]:
+        return lambda: self.open_structures(kind)
+
+    def open_structures(self, kind: StructureKind | None = None) -> None:
+        if self._note is not None and self.pages.currentWidget() is self.editor:
+            self.editor.open_structures(kind)
 
     def _page_commands(self) -> list[PaletteCommand]:
         if self._session.document.settings.page_size is None:
@@ -767,6 +794,7 @@ class MainWindow(QMainWindow):
             (("Ctrl+S",), self.flush),
             (("F2",), self._focus_title),
             (("F5",), self.start_presentation),
+            (("Ctrl+Shift+D",), lambda: self.open_structures()),
             (("F11",), self.toggle_focus_mode),
             (("Ctrl+Q",), self.quit),
         ]

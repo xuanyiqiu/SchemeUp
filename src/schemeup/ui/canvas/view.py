@@ -74,6 +74,7 @@ from schemeup.domain.serialization import element_from_dict, element_to_dict
 from schemeup.domain.sheets import Sheet, sheet_for
 from schemeup.domain.snapping import Guide, SheetSnap, SnapTargets
 from schemeup.domain.spatial import SpatialHash
+from schemeup.domain.structures import StructureError, StructureKind, build, recentered
 from schemeup.domain.style import FontFamily, TextAlign
 from schemeup.domain.text import ARROW_LABEL_MAX_WIDTH, arrow_label_center, label_area, place_block
 from schemeup.rendering.fonts import canvas_font
@@ -862,6 +863,18 @@ class CanvasView(QWidget):
             if (e := document.get(i)) is not None and not touches_pages(e, pages)
         }
         return (off - self._preview_ids) | moved
+
+    def insert_structure(self, kind: StructureKind, text: str) -> bool:
+        """Draw a data structure in the middle of the view.
+
+        Returns False when `text` does not describe that kind of structure."""
+        try:
+            elements = build(kind, text, self._session.style)
+        except StructureError:
+            return False
+        center = self._camera.to_world(self._viewport_center())
+        self._session.add(recentered(elements, center), label="Insert structure")
+        return True
 
     def add_page(self) -> None:
         """Add an empty page after the last one and bring it into view (paged notes only)."""

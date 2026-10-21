@@ -68,6 +68,7 @@ class BadgeButton(QToolButton):
 class Toolbar(Island):
     tool_chosen = Signal(object)  # ToolKind
     lock_toggled = Signal(bool)
+    structures_requested = Signal()
 
     def __init__(self, theme: Theme, parent: QWidget | None = None) -> None:
         super().__init__(theme, parent, radius=10)
@@ -103,6 +104,16 @@ class Toolbar(Island):
             layout.addWidget(button)
         self._lock.setFixedSize(QSize(36, 36))
         self._lock.setIconSize(QSize(18, 18))
+        self._second_separator = QFrame()
+        self._second_separator.setFrameShape(QFrame.Shape.VLine)
+        self._second_separator.setFixedWidth(1)
+        layout.addWidget(self._second_separator)
+        self.structures_button = BadgeButton("")
+        self.structures_button.setToolTip(self.tr("Draw a data structure") + " — Ctrl+Shift+D")
+        self.structures_button.setIconSize(QSize(20, 20))
+        self.structures_button.setFixedSize(QSize(36, 36))
+        self.structures_button.clicked.connect(self.structures_requested.emit)
+        layout.addWidget(self.structures_button)
         self.set_theme(theme)
         self.set_current(ToolKind.SELECT)
 
@@ -115,6 +126,8 @@ class Toolbar(Island):
         self._lock.setIcon(icon("lock" if self._lock.isChecked() else "lock-open", theme.text))
         self._lock.set_badge_color(theme.muted)
         self._separator.setStyleSheet(f"background: {theme.border}; border: none;")
+        self._second_separator.setStyleSheet(f"background: {theme.border}; border: none;")
+        self.structures_button.setIcon(icon("binary-tree", theme.text))
 
     def set_current(self, kind: ToolKind) -> None:
         button = self._buttons.get(kind)
