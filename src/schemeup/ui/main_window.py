@@ -333,7 +333,10 @@ class MainWindow(QMainWindow):
             self.editor.title_edit.setText(self._note.title)
             return
         self._library.rename_note(self._note.id, title)
-        self.editor.focus_canvas()
+        # editingFinished also fires when focus moves somewhere on purpose (a text being
+        # typed on the canvas, say); only Enter, which leaves focus here, hands it back.
+        if self.editor.title_edit.hasFocus():
+            self.editor.focus_canvas()
 
     def _set_tags(self, names: list[str]) -> None:
         if self._note is not None:

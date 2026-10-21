@@ -79,3 +79,12 @@ def test_typing_shows_the_text_where_it_will_be_drawn(
     assert abs(typed[0] - drawn[0]) <= 1  # top of the letters
     assert abs(typed[1] - drawn[1]) <= 1  # bottom
     assert abs(typed[2] - drawn[2]) <= 1  # left edge
+
+
+def test_finishing_the_title_does_not_steal_focus_from_a_text_being_typed(
+    window: MainWindow,
+) -> None:
+    window.new_note(None, "blank")  # leaves the cursor in the title
+    canvas = window.editor.canvas
+    canvas.create_text_at(Point(0, 0))
+    assert canvas.text_editor.element_id is not None
